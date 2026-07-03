@@ -1,0 +1,26 @@
+# hexo-bridge example: custom engine resolved by DOTTED PATH.
+#
+# The local-dev fallback: name the class by `module.path:ClassName`. No entry
+# point is needed; the resolver imports the module and reads the attribute.
+# This works for any importable module, including one you have not packaged.
+#
+# This is the same FirstLegalMoveEngine as the entry-point example, just reached
+# the other way. Compare with examples/config.custom-engine.entrypoint.toml.
+#
+# Run:
+#   HEXO_BRIDGE_TOKEN=hxo_... uv run hexo-bridge examples/config.custom-engine.dotted-path.toml
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+
+[engine]
+name = "hexo_bridge_examples.custom_engine:FirstLegalMoveEngine"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 5.0

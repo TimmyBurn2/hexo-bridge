@@ -1,0 +1,35 @@
+# hexo-bridge example: websocket engine session with request_id answer-matching.
+#
+# The engine session is the htttx basic_websocket the HeXO server hands you on
+# gameStart. This config turns on `require_request_id`: the bot declares
+# `basic_websocket.v1-alpha.request_id` in its capabilities, so every
+# move_request from the server MUST carry a request_id. The session echoes it
+# unchanged on the move_response and drops any answer that is stale (interrupted)
+# or mismatched (reordered), so a resent move cannot double-apply. See
+# docs/data-flow.md and OPEN-QUESTIONS item 2.
+#
+# NOTE: capabilities are advertised out-of-band (the bot's capabilities.json),
+# not over the websocket. Setting `require_request_id = true` asserts that you
+# have published `basic_websocket.v1-alpha.request_id` in capabilities.json.
+# If you set the flag without publishing, every move_request arrives without an
+# id and every answer is dropped: the bot appears to hang.
+#
+# Run:
+#   HEXO_BRIDGE_TOKEN=hxo_... uv run hexo-bridge examples/config.websocket-session.toml
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+
+[engine]
+name = "in_process_first_move"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+[engine_session.options]
+require_request_id = true
+
+[bridge]
+engine_timeout_seconds = 5.0
