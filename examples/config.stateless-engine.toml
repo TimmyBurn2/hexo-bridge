@@ -1,0 +1,31 @@
+# hexo-bridge example: HeXO + htttx stateless HTTP engine.
+#
+# The compute backend is a separate HTTP service exposing the htttx stateless
+# /turn endpoint. The bridge POSTs the board and reads back a move. The engine
+# session over which moves are exchanged with the HeXO server is still the
+# htttx websocket from gameStart.
+#
+# Run:
+#   uv run hexo-bridge examples/config.stateless-engine.toml
+#
+# Token: read from the file here (for local dev). For production prefer the env
+# var: HEXO_BRIDGE_TOKEN=hxo_... and delete the [platform.options] token line.
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+[platform.options]
+token = "hxo_replace_me"
+
+[engine]
+name = "htttx_stateless"
+[engine.options]
+base_url = "http://127.0.0.1:8080"
+# turn_path = "stateless/v1-alpha/turn"  # default; override via capabilities.json api_root
+timeout = 5.0
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 4.0

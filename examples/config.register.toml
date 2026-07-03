@@ -1,0 +1,27 @@
+# hexo-bridge example: bot:register enabled (register + retire), play-only default.
+#
+# The default play token (bot:play) cannot register or retire instances; those
+# need a separate operator token with bot:register scope. This config supplies
+# both: `token` is the per-instance bot:play token the bridge plays games with,
+# `register_token` is the operator bot:register token that unlocks the register
+# sub-port (HeXOPlatform.register). With no register_token, accessing
+# `platform.register` raises.
+#
+# Run:
+#   HEXO_BRIDGE_TOKEN=hxo_play_token... uv run hexo-bridge examples/config.register.toml
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+# register_token = "hxo_operator_register_token..."  # uncomment to enable register/retire
+
+[engine]
+name = "in_process_first_move"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 5.0

@@ -1,0 +1,24 @@
+# hexo-bridge example: custom engine resolved by ENTRY POINT.
+#
+# The same FirstLegalMoveEngine from src/hexo_bridge_examples/custom_engine.py is
+# registered as the `my_custom_engine` entry point in pyproject.toml. Selecting
+# it by name loads the class through the registry without the caller knowing
+# where it lives.
+#
+# Run:
+#   HEXO_BRIDGE_TOKEN=hxo_... uv run hexo-bridge examples/config.custom-engine.entrypoint.toml
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+
+[engine]
+name = "my_custom_engine"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 5.0

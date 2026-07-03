@@ -1,0 +1,30 @@
+# hexo-bridge example: HeXO + in-process engine (no external engine process).
+#
+# The simplest working config. The engine is a tiny in-process picker that
+# returns the first empty cells near the origin, good enough to prove the loop
+# end to end. The engine session is the htttx websocket the HeXO server hands
+# you on gameStart.
+#
+# Run:
+#   HEXO_BRIDGE_TOKEN=hxo_... uv run hexo-bridge examples/config.in-process.toml
+#
+# Token: read from the HEXO_BRIDGE_TOKEN env var. Keeping the token out of the
+# file keeps the secret off disk. To put it in the file instead, set
+# [platform.options] token = "hxo_..." and drop the env var.
+
+[platform]
+name = "hexo"
+base_url = "https://hexo.did.science"
+
+[engine]
+name = "in_process_first_move"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 5.0
+reconnect_backoff_seconds = 1.0
+reconnect_max_seconds = 30.0
