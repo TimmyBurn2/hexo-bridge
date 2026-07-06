@@ -13,7 +13,20 @@ uv sync
 
 The `hexo-bridge` command comes from `[project.scripts]` in `pyproject.toml`.
 
-## 2. Get a bot:play token
+## 2. Try it offline first (optional, no token)
+
+Before getting a token, you can run the whole loop on your machine:
+
+```sh
+uv run hexo-bridge examples/config.loopback.toml
+```
+
+The loopback platform plays one scripted game against your engine over a real
+local websocket (the same `htttx_websocket` session adapter used against
+HeXO), then exits. No HeXO account, no token, no network. It is a harness,
+not a referee.
+
+## 3. Get a bot:play token
 
 HeXO is the platform. An operator registers a bot instance with a `bot:register`
 token; each registered instance gets its own `bot:play` token. The bridge plays
@@ -27,7 +40,7 @@ Keep the token in the environment, not the file:
 export HEXO_BRIDGE_TOKEN=hxo_your_play_token
 ```
 
-## 3. Point at an engine
+## 4. Point at an engine
 
 The engine is the compute backend. It returns a move for a board state. The
 bridge ships three:
@@ -42,7 +55,7 @@ bridge ships three:
 If your engine is something else, write an adapter (next doc) and select it by
 entry point or dotted path.
 
-## 4. Fill a config
+## 5. Fill a config
 
 Copy the simplest one and edit:
 
@@ -72,7 +85,7 @@ Token from env vs file: `HEXO_BRIDGE_TOKEN` takes precedence over
 `[platform.options] token`. Keep it in the env for production, in the file only
 for local dev.
 
-## 5. Run
+## 6. Run
 
 ```sh
 uv run hexo-bridge config.toml

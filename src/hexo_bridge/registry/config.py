@@ -1,8 +1,10 @@
 """TOML config loading. No YAML.
 
-The token may come from the environment, not only the file. Config field names
-are kept minimal; operators extend via the `[engine.options]` and
-`[platform.options]` tables for adapter-specific settings.
+Config field names are kept minimal; operators extend via the
+`[engine.options]` and `[platform.options]` tables for adapter-specific
+settings. The loader is platform-neutral: it knows no tokens and reads no
+environment. The HeXO adapter resolves `HEXO_BRIDGE_TOKEN` itself, so a
+non-HeXO platform needs no token at all.
 
 Example config:
 
@@ -30,7 +32,6 @@ Example config:
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,27 +61,23 @@ class BridgeConfig:
 def load_config(path: str | Path) -> BridgeConfig:
     """Load a BridgeConfig from a TOML file.
 
-    The platform token is read from `platform.options.token` or the
-    `HEXO_BRIDGE_TOKEN` environment variable. Environment takes precedence
-    over the file so secrets stay out of disk.
+    Token handling lives in the HeXO adapter, not here: `HeXOPlatform` reads
+    `HEXO_BRIDGE_TOKEN` from the environment (taking precedence over an inline
+    `[platform.options] token`) and fails when it has neither. This loader
+    passes platform options through untouched.
     """
     with open(path, "rb") as f:
         data = tomllib.load(f)
 
     platform_section = data.get("platform", {})
-    token = os.environ.get("HEXO_BRIDGE_TOKEN") or platform_section.get("options", {}).pop(
-        "token", None
-    )
 
     # Hoist top-level platform keys (base_url, etc.) into options so the adapter
     # constructor receives them. The config example places base_url at [platform]
     # level, not under [platform.options], so both must be merged.
     platform_options = dict(platform_section.get("options", {}))
-    for key in ("base_url", "register_token", "timeout"):
+    for key in ("base_url", "token", "register_token", "timeout"):
         if key in platform_section and key not in platform_options:
             platform_options[key] = platform_section[key]
-    if token:
-        platform_options["token"] = token
 
     engine_section = data.get("engine", {})
     session_section = data.get("engine_session", {})

@@ -1,0 +1,29 @@
+# hexo-bridge example: offline loopback, no HeXO server, no account, no token.
+#
+# The "just htttx" mode. The loopback platform synthesizes gameStart and
+# gameFinish and stands up a local scripted htttx endpoint, so the bridge's
+# real engine session adapter (htttx_websocket) plays a real websocket game
+# entirely on this machine. One scripted game runs, then the bridge exits.
+#
+# The loopback is a test harness, not a referee: no legality, no win
+# detection, no clocks. Use it to smoke-test an engine end to end offline.
+#
+# Run (no token needed):
+#   uv run hexo-bridge examples/config.loopback.toml
+
+[platform]
+name = "loopback"
+[platform.options]
+# games = 1
+# move_requests_per_game = 2
+
+[engine]
+name = "in_process_first_move"
+[engine.options]
+side = "o"
+
+[engine_session]
+name = "htttx_websocket"
+
+[bridge]
+engine_timeout_seconds = 5.0

@@ -51,6 +51,23 @@ instance yourself with a `bot:register` token (`examples/config.register.toml`).
 
 The token is read from `HEXO_BRIDGE_TOKEN` (preferred) or
 `[platform.options] token` in the file. Keep it in the env for production.
+The token requirement belongs to the HeXO adapter: a non-HeXO platform (like
+the offline loopback below) needs no token at all.
+
+## Run offline ("just htttx")
+
+No HeXO account, no token, no network:
+
+```sh
+uv run hexo-bridge examples/config.loopback.toml
+```
+
+The loopback platform synthesizes `gameStart` and `gameFinish` and stands up a
+local scripted htttx endpoint, so the bridge's real `htttx_websocket` session
+adapter plays a real websocket game entirely on this machine, then the bridge
+exits. It is a test harness, not a referee: no legality, no win detection, no
+clocks. Use it to smoke-test an engine end to end before pointing at a real
+HeXO server.
 
 ## The two ports and the plugin path
 

@@ -4,8 +4,11 @@ Implements the full `PlatformPort` surface against the HeXO Bot API
 (https://hexo.did.science). Uses `httpx.AsyncClient` for HTTP and a manual
 NDJSON line reader for the global event stream.
 
-Auth: a Personal Access Token sent as `Authorization: Bearer hxo_...`. The token
-may come from the environment, not only from the config file.
+Auth: a Personal Access Token sent as `Authorization: Bearer hxo_...`. The
+token requirement is this adapter's, not the bridge's: `HeXOPlatform` reads
+`HEXO_BRIDGE_TOKEN` from the environment (taking precedence over the `token`
+constructor argument, so secrets stay out of config files) and raises when it
+has neither. A non-HeXO platform runs with no token.
 
 Endpoints implemented (per openapi.yaml):
   - GET  /api/stream/event         -> Events (NDJSON, long-lived)
@@ -31,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -349,12 +353,15 @@ class HeXOPlatform(PlatformPort):
     def __init__(
         self,
         base_url: str,
-        token: str,
+        token: str | None = None,
         *,
         register_token: str | None = None,
         timeout: float = 30.0,
         stream_read_timeout: float = 45.0,
     ) -> None:
+        token = os.environ.get("HEXO_BRIDGE_TOKEN") or token
+        if not token:
+            raise ValueError("no HeXO token: set HEXO_BRIDGE_TOKEN or [platform.options] token")
         self._base_url = base_url.rstrip("/")
         self._token = token
         self._timeout = timeout

@@ -61,13 +61,15 @@ def build_platform(config: BridgeConfig) -> PlatformPort:
     into the platform options here (the platform adapter accepts it as
     `stream_read_timeout`), so it does not need to be duplicated under
     `[platform.options]`.
+
+    Credentials are the platform adapter's concern, not the bridge's: the HeXO
+    adapter requires a token and fails without one, a platform that needs none
+    (the loopback harness) constructs with none.
     """
     cls = resolve_adapter(config.platform.name, PLATFORM_GROUP)
     options = dict(config.platform.options)
     if "stream_read_timeout" not in options:
         options["stream_read_timeout"] = config.stream_read_timeout_seconds
-    if "token" not in options:
-        raise ValueError("no HeXO token: set HEXO_BRIDGE_TOKEN or [platform.options] token")
     return cls(**options)
 
 
@@ -206,13 +208,20 @@ async def _handle_move_request(
         logger.exception("game %s: send_move_response failed", ctx.game_id)
 
 
-async def run_bridge(config: BridgeConfig) -> None:
+async def run_bridge(
+    config: BridgeConfig,
+    *,
+    platform: PlatformPort | None = None,
+    engine: EnginePort | None = None,
+) -> None:
     """Run the bridge: open the global stream, dispatch events, manage games.
 
     Reconnects on a dropped stream with backoff. Per-game failures are isolated.
+    `platform` and `engine` override config resolution when the caller already
+    holds a constructed adapter (tests inspect the instance after the run).
     """
-    platform = build_platform(config)
-    engine = build_engine(config)
+    platform = platform or build_platform(config)
+    engine = engine or build_engine(config)
     session_cls = build_engine_session_factory(config)
 
     games: dict[str, asyncio.Task] = {}
@@ -257,12 +266,20 @@ async def _run_stream_loop(
                 await _dispatch_event(
                     event, platform, engine, session_cls, config, games, stop_event
                 )
-            logger.info("global stream ended; reconnecting in %.1fs", backoff)
+            logger.info("global stream ended")
         except Exception:
-            logger.exception("global stream error; reconnecting in %.1fs", backoff)
+            logger.exception("global stream error")
 
+        # A platform whose event supply is finite marks its events sub-port
+        # `exhausted` when there is nothing left to stream; the bridge stops
+        # instead of reconnecting. Absent attribute (HeXO) means never
+        # exhausted, so the reconnect loop is unchanged there.
+        if getattr(platform.events, "exhausted", False):
+            logger.info("event supply exhausted; shutting down")
+            break
         if stop_event.is_set():
             break
+        logger.info("reconnecting in %.1fs", backoff)
         await asyncio.sleep(backoff)
         backoff = min(backoff * 2, max_backoff)
 
@@ -330,7 +347,8 @@ async def _on_game_start(
 
     session = session_cls(**config.engine_session.options)
     try:
-        await session.connect(engine_info.socketUrl, engine_info.token)
+        # socketUrl is a pydantic AnyUrl; the session port takes a str.
+        await session.connect(str(engine_info.socketUrl), engine_info.token)
     except Exception:
         logger.exception("game %s: failed to connect engine session", game_id)
         return
