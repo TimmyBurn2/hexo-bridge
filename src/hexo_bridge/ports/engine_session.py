@@ -18,15 +18,24 @@ but the spec defines roles by packet direction, not dial direction, so the
 adapter receives `move_request` and sends `move_response`. See OPEN-QUESTIONS
 item 2 for the full reasoning.
 
-Retry safety lives in htttx `request_id` answer-matching
-(`MoveRequestPacket.request_id`): the client assigns a per-request id, the bot
-echoes it unchanged on the answering `move_response`, and the client discards
-any response whose id is not the outstanding one. The outstanding request is
-invalidated by the next move request, an `interrupt`, or a game setup packet;
-a late answer is matched as out-of-id and discarded. The session adapter tracks
-the outstanding id and drops a stale or mismatched answer locally rather than
+Retry safety lives in htttx answer-matching
+(`MoveRequestPacket.request_id`): when the bot declares the
+`basic_websocket.v1-alpha.request_id` capability and the server assigns a
+per-request id, the bot echoes it unchanged on the answering `move_response`,
+and the client discards any response whose id is not the outstanding one. The
+outstanding request is invalidated by the next move request, an `interrupt`, or
+a game setup packet; a late answer is matched as out-of-id and discarded. When
+the server does not assign ids (a conformant positional-only server, or a bot
+that does not declare the capability), the adapter correlates positionally:
+at most one move request is outstanding at a time, so any answer while a
+request is outstanding is the answer. The session adapter tracks the
+outstanding request and drops a stale or mismatched answer locally rather than
 sending it, so a resent or reordered response cannot double-apply. See
 `HtttxWebsocketSession`.
+
+The board the bot plays on arrives in the `setup` packet's `board.cells` and
+is forwarded to the bridge, which replays the cumulative moves on top of it.
+The bridge does not bake in an origin; it plays whatever the server delivers.
 
 The bridge loop drives a session: `recv()` yields packets, and on a
 `move_request` the bridge calls the `EnginePort` to compute a move and sends it
@@ -48,10 +57,13 @@ from hexo_bridge.core.move import Move, Side
 class SetupPacket:
     """Initial board setup. The server sends this before any move request.
 
-    `board_cells` is the initial board as reported by the server. Per the
-    htttx spec, unless `free_setup` is supported, this is exactly one cross at
-    the origin (0, 0). The adapter does not validate this; the server is the
-    referee.
+    `board_cells` is the initial board as reported by the server, as a list of
+    `(q, r, side)` tuples. The bridge consumes whatever is delivered and
+    replays the cumulative moves on top of it; it does not require any
+    particular seed (not the single origin cross, not any other). Under
+    `free_setup` a conformant server may deliver a different starting position,
+    and the bridge plays it as delivered. The adapter does not validate this;
+    the server is the referee.
     """
 
     board_cells: list[tuple[int, int, str]]
@@ -61,9 +73,12 @@ class SetupPacket:
 class MoveRequestPacket:
     """The server asks the adapter to make a move.
 
-    `side` is the engine side to move (x or o). `previous` is the ordered list of
-    moves made since the last request (the opponent's moves, or empty if this is
-    the first request). `time_limit_seconds` and `request_id` are optional.
+    `side` is the engine side to move (x or o). The server states which side to
+    play; the bridge does not derive it from ply parity or an origin convention.
+    `previous` is the ordered list of moves made since the last request (the
+    opponent's moves, or empty if this is the first request). `time_limit_seconds`
+    and `request_id` are optional. When `request_id` is None, the session
+    correlates positionally (one request outstanding).
     """
 
     side: Side

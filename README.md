@@ -108,12 +108,18 @@ reached both ways).
 - No HeXO move POST. The server is the referee.
 - No resign after a rejected move. A genuine engine move the server rejects ends
   the game with `finishReason: illegal-move`, server-side.
-- No CAS `ply`. Retry safety lives in htttx `request_id` answer-matching on the
-  engine session: the adapter echoes the server-assigned id unchanged and drops
-  a stale (interrupted) or mismatched (reordered) answer so a resent move cannot
-  double-apply.
+- No CAS `ply`. Retry safety lives in htttx answer-matching on the engine
+  session: when the server assigns a `request_id` the adapter echoes it
+  unchanged and drops a stale (interrupted) or mismatched (reordered) answer so
+  a resent move cannot double-apply; when the server does not assign ids, the
+  adapter correlates positionally (one request outstanding), exactly as open as
+  the htttx spec.
 
-See `docs/data-flow.md` for who owns what across the bridge.
+The bridge is server-neutral: it builds the board from the `setup` packet the
+server delivers (not a baked-in origin), takes the side to move from
+`move_request.side` (not ply parity), and plays a positional-only conformant
+server (no `request_id`) as well as one that assigns ids. See
+`docs/data-flow.md` for who owns what across the bridge.
 
 ## Spec provenance
 

@@ -133,10 +133,25 @@ class LoopbackPlatform:
         move_requests_per_game: int = 2,
         game_timeout_seconds: float = 30.0,
         stream_read_timeout: float = 45.0,
+        send_request_id: bool = True,
+        setup_cells: list[tuple[int, int, str]] | None = None,
     ) -> None:
         self._games = games
         self._move_requests = move_requests_per_game
         self._game_timeout = game_timeout_seconds
+        # When False, the loopback plays a positional-only server: it sends no
+        # request_id on any move_request and accepts the next move_response as
+        # the answer (no id matching). This is the real openness test: the
+        # bridge must play a conformant positional-only server to completion,
+        # not just one that assigns ids.
+        self._send_request_id = send_request_id
+        # The board the loopback delivers in the setup packet. Defaults to the
+        # standard opening (one cross at the origin). Override to prove the
+        # bridge consumes whatever the server delivers (e.g. a non-[0,0] board)
+        # rather than falling back to a baked-in origin.
+        self._setup_cells = (
+            list(setup_cells) if setup_cells is not None else [(0, 0, "x")]
+        )
         self._server: Any = None
         self._port: int | None = None
         self._expected_tokens: dict[str, str] = {}
@@ -217,29 +232,51 @@ class LoopbackPlatform:
         opening, so the script needs no leading opponent move. Each
         move_request's `previous` echoes the bot's own last move verbatim
         (first, per the htttx spec) plus one canned opponent move placed far
-        from the origin. No legality is checked; echoing is not refereeing.
+        from the setup. No legality is checked; echoing is not refereeing.
+
+        `send_request_id=False` plays a positional-only server: no request_id
+        on any move_request, and the next move_response is accepted as the
+        answer (no id matching). `setup_cells` overrides the board the setup
+        packet delivers, so a test can prove the bridge consumes a non-[0,0]
+        board rather than falling back to a baked-in origin.
         """
         await connection.send(
-            json.dumps({"type": "setup", "board": {"cells": [{"q": 0, "r": 0, "p": "x"}]}})
+            json.dumps(
+                {
+                    "type": "setup",
+                    "board": {
+                        "to_move": "o",
+                        "cells": [
+                            {"q": q, "r": r, "p": s} for q, r, s in self._setup_cells
+                        ],
+                    },
+                }
+            )
         )
         previous: list[dict] = []
         for n in range(1, self._move_requests + 1):
-            await connection.send(
-                json.dumps(
-                    {
-                        "type": "move_request",
-                        "side": "o",
-                        "previous": previous,
-                        "move_time_limit": 5.0,
-                        "request_id": n,
-                    }
-                )
-            )
+            request: dict = {
+                "type": "move_request",
+                "side": "o",
+                "previous": previous,
+                "move_time_limit": 5.0,
+            }
+            if self._send_request_id:
+                request["request_id"] = n
+            await connection.send(json.dumps(request))
             payload = json.loads(await connection.recv())
             self.received_move_responses[game_id].append(payload)
-            if payload.get("type") != "move_response" or payload.get("request_id") != n:
+            if payload.get("type") != "move_response":
                 logger.warning(
                     "loopback: game %s: unexpected packet %s, ending script", game_id, payload
+                )
+                break
+            if self._send_request_id and payload.get("request_id") != n:
+                logger.warning(
+                    "loopback: game %s: request_id mismatch (got %s, want %s), ending script",
+                    game_id,
+                    payload.get("request_id"),
+                    n,
                 )
                 break
             previous = [

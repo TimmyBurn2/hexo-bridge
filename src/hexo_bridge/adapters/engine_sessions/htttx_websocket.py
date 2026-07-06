@@ -13,13 +13,26 @@ bot: it receives `setup`, `move_request`, and `heartbeat` from the server and
 sends `move_response` back. See OPEN-QUESTIONS item 2.
 
 Retry safety via `request_id` (htttx spec, `MoveRequestPacket.request_id`): the
-client assigns a strictly-increasing per-request id; the bot echoes it unchanged
-on the answering `move_response`; the client discards any response whose id is
-not the outstanding one. An `interrupt` invalidates the outstanding request and
-"a late answer is matched as out-of-id and discarded". This adapter goes one
-step further and drops a stale or mismatched answer locally rather than sending
-it, so a resent or reordered response cannot double-apply even before the
-client sees it.
+client assigns a strictly-increasing per-request id when the bot declares the
+`basic_websocket.v1-alpha.request_id` capability; the bot echoes it unchanged on
+the answering `move_response`; the client discards any response whose id is not
+the outstanding one. An `interrupt` invalidates the outstanding request and
+"a late answer is matched as out-of-id and discarded". When the server does not
+assign ids (a conformant positional-only server, or a bot that does not declare
+the capability), the adapter correlates positionally: at most one request is
+outstanding at a time, so any answer while a request is outstanding is the
+answer. The adapter tracks a separate `_outstanding` flag so it can distinguish
+"no request outstanding" from "a positional request outstanding (no id)". An
+`interrupt` in positional mode (no id on the interrupt) invalidates the single
+outstanding request. This adapter goes one step further and drops a stale or
+mismatched answer locally rather than sending it, so a resent or reordered
+response cannot double-apply.
+
+The board the bot plays on comes from the delivered `setup` packet, not from a
+baked-in origin. The adapter passes `setup.board.cells` through to the bridge,
+which replays the cumulative moves on top of it. The standard server delivers
+one cross at the origin there; a conformant server may deliver a different
+starting position under `free_setup`, and the adapter forwards it unchanged.
 
 To react to an `interrupt` that arrives while the engine is computing, the
 session runs a background reader task that drains the socket continuously.
@@ -82,8 +95,9 @@ class HtttxWebsocketSession:
             `move_request` from the server MUST carry a `request_id`. A request
             without one is a protocol violation: the adapter logs it and drops
             the answer rather than sending an unmatched response. When False
-            (default), `request_id` is optional and answers are matched by
-            transport ordering plus whatever id the server supplies.
+            (default), `request_id` is optional and answers are correlated
+            positionally (one outstanding) when the server sends no id, and by
+            id when it does.
 
             Capabilities are advertised out-of-band (the bot's
             `capabilities.json`), not over the websocket. Setting this flag
@@ -99,9 +113,12 @@ class HtttxWebsocketSession:
         self._reader_task: asyncio.Task | None = None
         self._queue: asyncio.Queue | None = None
         # The request_id the server assigned to the currently outstanding
-        # move_request, or None when no request is outstanding or the server
-        # is not using ids. Cleared after the answer is sent or dropped.
+        # move_request, or None when no request is outstanding OR the server is
+        # correlating positionally (no ids in use). `_outstanding` is the
+        # authoritative "a request is currently outstanding" flag; the id is
+        # secondary. Cleared after the answer is sent or dropped.
         self._outstanding_request_id: int | None = None
+        self._outstanding: bool = False
         # Set by an `interrupt` (or by a request_id violation under
         # require_request_id) to invalidate the outstanding request. The next
         # send_move_response for that request is dropped, not sent.
@@ -170,9 +187,16 @@ class HtttxWebsocketSession:
         Per the spec: "After an interrupt the bot must not answer that request;
         a late answer is matched as out-of-id and discarded." If the interrupt
         carries a request_id and it does not match the outstanding one, ignore
-        it (it targets a request that is not currently outstanding). Otherwise
+        it (it targets a request that is not currently outstanding, or the
+        session is positional and the interrupt is not for us). Otherwise
         mark the outstanding request invalidated so the pending send is dropped.
+
+        Positional case: when the server is not assigning ids, an interrupt
+        carries no request_id (the spec only attaches one when request_id is in
+        use) and applies to the single outstanding request.
         """
+        if not self._outstanding:
+            return
         rid = data.get("request_id")
         if (
             rid is not None
@@ -186,12 +210,11 @@ class HtttxWebsocketSession:
                 self._outstanding_request_id,
             )
             return
-        if self._outstanding_request_id is not None:
-            logger.info(
-                "engine session: interrupt invalidated outstanding request_id=%s",
-                self._outstanding_request_id,
-            )
-            self._invalidated = True
+        logger.info(
+            "engine session: interrupt invalidated outstanding request_id=%s",
+            self._outstanding_request_id,
+        )
+        self._invalidated = True
 
     def _parse_packet(self, data: dict) -> SessionPacket:
         ptype = data.get("type")
@@ -201,22 +224,20 @@ class HtttxWebsocketSession:
             # interrupt or the next move_request (htttx spec: the outstanding
             # request is invalidated by "the next move request, an interrupt, or
             # a game setup packet").
-            if self._outstanding_request_id is not None:
+            if self._outstanding:
                 logger.info(
                     "engine session: setup packet invalidated outstanding request_id=%s",
                     self._outstanding_request_id,
                 )
                 self._invalidated = True
+            # Consume whatever board the server delivered. The bridge plays on
+            # it as delivered; it does not require the single origin cross and
+            # does not fall back to a baked-in origin.
             cells: list[tuple[int, int, str]] = []
             board = data.get("board")
             if board and "cells" in board:
                 for cell in board["cells"]:
                     cells.append((cell["q"], cell["r"], cell["p"]))
-            if cells and cells != [(0, 0, "x")]:
-                logger.warning(
-                    "engine session: non-standard setup board received "
-                    "(free_setup); bridge assumes standard opening"
-                )
             return SetupPacket(board_cells=cells)
         elif ptype == "move_request":
             validated = MoveRequestPacket.model_validate(data)
@@ -238,8 +259,10 @@ class HtttxWebsocketSession:
                     "require_request_id is set; dropping answer"
                 )
                 self._invalidated = True
+                self._outstanding = False
                 self._outstanding_request_id = None
             else:
+                self._outstanding = True
                 self._outstanding_request_id = rid
                 self._invalidated = False
             return MoveRequestP(
@@ -271,17 +294,30 @@ class HtttxWebsocketSession:
         return await self._queue.get()
 
     async def send_move_response(self, move: Move, request_id: int | None = None) -> None:
-        """Send `move_response` echoing `request_id` unchanged.
+        """Send `move_response` echoing `request_id` unchanged when present.
 
         Drops the answer (does not send) when:
+          - no request is currently outstanding (the bridge is not answering
+            anything), or
           - the outstanding request was invalidated by an `interrupt` or a
             `require_request_id` violation, or
-          - the supplied `request_id` does not match the outstanding one
+          - both the supplied and outstanding ids are present and differ
             (mismatched / reordered answer).
+
+        Positional correlation: when the server is not assigning ids, the
+        outstanding request is tracked by the `_outstanding` flag alone, and
+        any answer while a request is outstanding is sent (one-outstanding
+        correlation, exactly as open as the htttx spec).
 
         After sending or dropping, the outstanding request is cleared.
         """
         if self._ws is None or not self._connected:
+            self._clear_outstanding()
+            return
+        if not self._outstanding:
+            logger.debug(
+                "engine session: dropping move_response with no request outstanding"
+            )
             self._clear_outstanding()
             return
         if self._invalidated:
@@ -318,6 +354,7 @@ class HtttxWebsocketSession:
             self._clear_outstanding()
 
     def _clear_outstanding(self) -> None:
+        self._outstanding = False
         self._outstanding_request_id = None
         self._invalidated = False
 

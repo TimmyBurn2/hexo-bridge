@@ -67,17 +67,17 @@ class Move:
     """A single complete move of one or two placements, played by one side.
 
     Per the htttx spec a completed turn is two placements (`Move.pieces` has
-    minItems=2 maxItems=2). The opening ply 0 is the lone exception: the server
-    places one cross at the origin, and a bot never submits it. That exception is
-    modelled at the board level (the opening is seeded into the board state).
+    minItems=2 maxItems=2). The opening position (one cross at the origin on
+    the standard server) is delivered in the `setup` packet, not submitted as a
+    `Move`; a bot never submits the opening. That setup seed is carried on
+    `GameState.setup_cells`, not modelled as a `Move`.
 
-    A `Move` may carry ONE placement in two cases: (a) the engine returned a
-    single stone that wins the game on the first cross of a turn (the server
-    ends the game on that stone and ignores the rest), or (b) a `previous`
-    entry from the server carries the single-stone opening. The bridge owns a
-    normalizer (`normalize_move`) that pads a one-piece move to two before it is
-    sent on the wire, so the transport always carries a legal two-stone shape.
-    Adapters may return one or two pieces; the bridge pads.
+    A `Move` may carry ONE placement when the engine returns a single stone that
+    wins the game on the first cross of a turn (the server ends the game on that
+    stone and ignores the rest). The bridge owns a normalizer (`normalize_move`)
+    that pads a one-piece move to two before it is sent on the wire, so the
+    transport always carries a legal two-stone shape. Adapters may return one or
+    two pieces; the bridge pads.
     """
 
     __slots__ = ("pieces", "side")

@@ -84,10 +84,14 @@ def _run_bridge(config_path: Path) -> None:
 
 
 def _validate(config_path: Path) -> int:
-    """Dry-run the configured engine once against an opening-ply board.
+    """Dry-run the configured engine once, no server, no token, no session.
 
-    No server, no token, no session. Catches adapter resolution, spawn, ABI,
-    import, shape, and think-time errors in seconds and prints the move.
+    Builds a `GameState` for an opening-ply move: the side the config selects,
+    no setup board, no moves. Catches adapter resolution, spawn, ABI, import,
+    shape, and think-time errors in seconds and prints the move. `validate`
+    runs whichever boundary the config selects: in-process, subprocess/stdio,
+    or htttx-stateless (the latter POSTs to the configured `/turn` URL, so a
+    stateless engine must be running for it to succeed).
     """
     try:
         config = load_config(config_path)
@@ -100,11 +104,10 @@ def _validate(config_path: Path) -> int:
 
     engine_name = config.engine.name
     print(f"engine: {engine_name}")
-    # The opening is ply 0: the server placed one cross at the origin. It is O's
-    # turn (the side that moves first after the opening). validate mirrors the
-    # loopback: the bot is O, no clock pressure, no request_id.
+    # No setup packet offline: the engine plays on an empty board. The side is
+    # the configured side (or O by default); there is no server stating it.
     state = GameState(side=Side.O, moves=[], moves_to_apply=[], time_limit_seconds=None, request_id=None)
-    print(f"state: side={state.side.value}, moves={len(state.moves)}, clock=none")
+    print(f"state: side={state.side.value}, setup_cells={len(state.setup_cells)}, moves={len(state.moves)}, clock=none")
 
     try:
         engine = build_engine(config)

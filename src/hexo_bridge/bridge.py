@@ -13,18 +13,34 @@ Responsibilities:
 
 The per-game loop (run as an `asyncio.Task`):
   1. Open an EngineSessionPort to `gameStart.engine.socketUrl` with the per-game token.
-  2. recv loop: on `move_request`, build a `GameState`, call `EnginePort.get_move`
-     (with a timeout), and send the result via `send_move_response`.
+  2. recv loop: on `setup`, capture the delivered board as the seed; on
+     `move_request`, build a `GameState` on that seed plus the cumulative moves,
+     call `EnginePort.get_move` (with a timeout), and send the result via
+     `send_move_response`.
   3. On `SessionClosed`, the game is done; reconcile with the `gameFinish` event.
   4. On a bridge-side translation error, do NOT send a move; surface as a fault.
      A genuine engine move that the server rejects is handled by the server
      (`finishReason: illegal-move`), not by the bridge resigning.
 
+Server-neutral by construction:
+  - Board: built from the `setup` packet the server delivers, not from a
+    baked-in origin. The standard server delivers one cross at the origin; a
+    conformant server may deliver a different starting position under
+    `free_setup`, and the bridge plays it as delivered.
+  - Side to move: taken from `move_request.side` (the server states it), not
+    derived from ply parity or an origin convention.
+  - request_id: echoed unchanged when the server sends one; when absent, the
+    session correlates positionally (at most one request outstanding), so the
+    bridge plays a positional-only conformant server, not just one that
+    assigns ids.
+
 Retry safety: there is no HeXO move POST, so there is no CAS `ply` to guard.
-The "a resent move cannot double-apply" property lives in htttx `request_id`
-answer-matching, enforced inside the engine session adapter: it echoes the
-server-assigned `request_id` unchanged on each `move_response` and drops a
-stale (interrupted) or mismatched (reordered) answer rather than sending it.
+The "a resent move cannot double-apply" property lives in htttx answer-matching,
+enforced inside the engine session adapter: when the server assigns a
+`request_id` it is echoed unchanged on each `move_response` and a stale
+(interrupted) or mismatched (reordered) answer is dropped rather than sent; when
+the server does not assign ids, positional ordering plus one-outstanding is the
+correlation, which is exactly as open as the htttx spec.
 """
 
 from __future__ import annotations
@@ -41,6 +57,7 @@ from hexo_bridge.ports.engine_session import (
     EngineSessionPort,
     MoveRequestPacket,
     SessionClosed,
+    SetupPacket,
 )
 from hexo_bridge.ports.platform import PlatformPort
 from hexo_bridge.registry.config import BridgeConfig
@@ -90,10 +107,13 @@ class GameContext:
     side: Side
     session: EngineSessionPort
     engine: EnginePort
+    setup_cells: list[tuple[int, int, str]] = None  # type: ignore[assignment]
     moves_seen: int = 0
     cumulative_moves: list[Move] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
+        if self.setup_cells is None:
+            self.setup_cells = []
         if self.cumulative_moves is None:
             self.cumulative_moves = []
 
@@ -123,10 +143,14 @@ async def run_game(
                 logger.info("game %s: session closed (%s)", ctx.game_id, packet.reason)
                 break
 
+            if isinstance(packet, SetupPacket):
+                _handle_setup(ctx, packet)
+                continue
+
             if isinstance(packet, MoveRequestPacket):
                 await _handle_move_request(ctx, packet, engine_timeout)
                 continue
-            # setup, heartbeat: no action needed
+            # heartbeat: no action needed
     except Exception:
         logger.exception("game %s: per-game loop crashed", ctx.game_id)
     finally:
@@ -134,6 +158,29 @@ async def run_game(
             await ctx.session.close()
         except Exception:
             pass
+
+
+def _handle_setup(ctx: GameContext, packet: SetupPacket) -> None:
+    """Capture the board the server delivered in the `setup` packet.
+
+    The bridge plays on whatever board the server delivers, not on a baked-in
+    origin. The standard HeXO server delivers one cross at the origin here; a
+    conformant server may deliver a different starting position (under
+    `free_setup`), and the bridge plays it as delivered.
+
+    Per the htttx spec, a setup packet invalidates the outstanding request and
+    re-bases the move ledger: the moves the server reports in `previous` from
+    here on are relative to this seed. The bridge treats a fresh setup as a
+    full re-sync (new seed, empty cumulative move ledger).
+    """
+    ctx.setup_cells = list(packet.board_cells)
+    ctx.cumulative_moves = []
+    ctx.moves_seen = 0
+    logger.info(
+        "game %s: setup delivered %d cell(s); board re-synced from setup",
+        ctx.game_id,
+        len(ctx.setup_cells),
+    )
 
 
 async def _handle_move_request(
@@ -154,9 +201,16 @@ async def _handle_move_request(
     the move come back in `previous` on the next request. This avoids
     double-counting.
 
+    Side to move: taken from `packet.side` (the server states it). The bridge
+    does not derive side from ply parity or an origin convention.
+
+    Board: replayed from `ctx.setup_cells` (the delivered `setup` packet) plus
+    `ctx.cumulative_moves`. The bridge does not bake in an origin.
+
     Retry safety: the `request_id` carried on the packet is echoed unchanged on
-    the `move_response`. The session adapter drops a stale or mismatched answer,
-    so a resent or reordered response cannot double-apply (htttx answer-matching).
+    the `move_response`. When absent, the session correlates positionally (one
+    request outstanding). The session adapter drops a stale or mismatched
+    answer, so a resent or reordered response cannot double-apply.
     """
     for mv_side, pieces in packet.previous:
         p1 = (pieces[0][0], pieces[0][1])
@@ -183,6 +237,7 @@ async def _handle_move_request(
 
     state = GameState(
         side=ctx.side,
+        setup_cells=list(ctx.setup_cells),
         moves=list(ctx.cumulative_moves),
         moves_to_apply=list(ctx.cumulative_moves[-len(packet.previous) :])
         if packet.previous
