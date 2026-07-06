@@ -66,8 +66,12 @@ class GameState:
     `previous` field: ordered, the bot's own prior move first then the client's."""
 
     time_limit_seconds: float | None = None
-    """Optional per-move time limit the engine should honour, in seconds. The
-    adapter fills this from the platform time control when applicable."""
+    """Clock-remaining for this move in seconds (the htttx `move_time_limit`),
+    or None for no server limit. This is the turn clock the server enforces,
+    NOT a think budget. The bridge clamps the engine call to
+    `min(engine_timeout_seconds, time_limit_seconds)`; an adapter may pass a
+    separate suggested budget to its engine (a hint), but the bridge's clamp is
+    the hard bound."""
 
     request_id: int | None = None
     """Optional per-request id for answer-matching on transports that support it."""

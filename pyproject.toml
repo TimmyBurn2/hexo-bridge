@@ -20,6 +20,9 @@ hexo-bridge = "hexo_bridge.cli:main"
 [project.entry-points."hexo_bridge.engines"]
 htttx_stateless = "hexo_bridge.adapters.engines.htttx_stateless:HtttxStatelessEngine"
 in_process_first_move = "hexo_bridge.adapters.engines.in_process:InProcessFirstMoveEngine"
+# Generic stdio line-protocol adapter: the clean path for an existing engine.
+# See docs/write-your-own-adapter.md and src/hexo_bridge/adapters/engines/stdio.py.
+stdio = "hexo_bridge.adapters.engines.stdio:StdioLineEngine"
 # Worked third-party example adapter (see src/hexo_bridge_examples/).
 my_custom_engine = "hexo_bridge_examples.custom_engine:FirstLegalMoveEngine"
 

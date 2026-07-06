@@ -104,11 +104,17 @@ def test_game_state_to_board_replay():
     assert board.side_at(Coord(1, 0)) is Side.O
 
 
-def test_move_rejects_wrong_piece_count():
+def test_move_accepts_one_or_two_pieces():
     import pytest
 
+    # One piece is now valid: an engine may return a single stone that wins on
+    # the first cross; the bridge normalizes to two before sending.
+    Move(Side.X, (Coord(0, 1),))
+    Move(Side.X, (Coord(0, 1), Coord(0, 2)))
     with pytest.raises(ValueError):
-        Move(Side.X, (Coord(0, 1),))
+        Move(Side.X, ())
+    with pytest.raises(ValueError):
+        Move(Side.X, (Coord(0, 1), Coord(0, 2), Coord(0, 3)))
 
 
 def test_move_rejects_duplicate_pieces():
@@ -116,6 +122,20 @@ def test_move_rejects_duplicate_pieces():
 
     with pytest.raises(ValueError):
         Move(Side.X, (Coord(1, 1), Coord(1, 1)))
+
+
+def test_normalize_move_pads_single_piece():
+    from hexo_bridge.core.board import Board
+    from hexo_bridge.core.move import normalize_move
+
+    one = Move(Side.O, (Coord(1, 0),))
+    padded = normalize_move(one, Board.with_opening())
+    assert len(padded.pieces) == 2
+    assert padded.pieces[0] == Coord(1, 0)
+    assert padded.pieces[1] != Coord(1, 0)
+    # A two-piece move passes through unchanged.
+    two = Move(Side.O, (Coord(1, 0), Coord(-1, 1)))
+    assert normalize_move(two, Board.with_opening()) is two
 
 
 def test_side_other():

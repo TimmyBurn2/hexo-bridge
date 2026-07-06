@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from hexo_bridge.core.board import GameState
-from hexo_bridge.core.move import Coord, Move, Side
+from hexo_bridge.core.move import Coord, Move, Side, normalize_move
 from hexo_bridge.ports.engine import EnginePort, EngineTranslationError
 from hexo_bridge.ports.engine_session import (
     EngineSessionPort,
@@ -168,6 +168,12 @@ async def _handle_move_request(
         return
 
     time_limit = packet.time_limit_seconds
+    # `time_limit` is clock-remaining for this move (the htttx `move_time_limit`),
+    # NOT a think budget. The bridge's `wait_for` below is the hard bound: the
+    # engine call is clamped to `min(engine_timeout, clock)` so an engine that
+    # ignores any suggested budget cannot blow the turn. A budget an engine sets
+    # for itself (e.g. a SubprocessEngine `time_limit` field in its request) is a
+    # hint; it is not clamped here.
     timeout = min(engine_timeout, time_limit) if time_limit else engine_timeout
 
     state = GameState(
@@ -196,6 +202,12 @@ async def _handle_move_request(
     except Exception:
         logger.exception("game %s: engine.get_move crashed", ctx.game_id)
         return
+
+    # The engine may return one or two pieces (one when the first stone already
+    # wins). The bridge owns the single-stone normalization so adapters do not
+    # each reinvent padding; the transport always carries a two-stone shape.
+    if len(move.pieces) == 1:
+        move = normalize_move(move, state.to_board())
 
     try:
         await ctx.session.send_move_response(move, packet.request_id)
