@@ -4,6 +4,25 @@ The bridge is ports and adapters. The core is pure and does no I/O. You write an
 adapter that implements one port, register it, and point a config at it. This
 doc covers the engine port (the common case) and the platform port.
 
+## Three engine boundaries, by portability
+
+The bridge has three ways to reach an engine. Pick by how portable you want the
+engine to be, not by language:
+
+| Boundary | Portability | When to pick |
+| --- | --- | --- |
+| htttx-stateless over HTTP | ecosystem-wide | A new engine in any language that should work with any conformant client, not just this bridge. Speaks BSoD's ecosystem engine spec (`/turn`), so the same server works elsewhere. |
+| stdio line protocol over a subprocess | this bridge only | Wrapping an existing local engine that already speaks lines, or one that does not want to run an HTTP server. Any language, any ABI; the subprocess boundary decouples ABI from the bridge. |
+| in-process Python | pure-Python only | A quick stub or a Python-native engine. No I/O, no subprocess. |
+
+Generality here is language-agnostic wire boundaries plus clear docs, not more
+surface area. The bridge ships exactly two wire formats (the htttx-stateless
+HTTP shape and the stdio line protocol) plus the Python in-process convenience.
+There is no third wire format (no gRPC, protobuf, or msgpack), and no plugin
+framework: an engine written to the stdio protocol is coupled to this bridge,
+while an htttx-stateless engine is portable. State plainly which one you are
+building.
+
 ## The engine port
 
 `EnginePort` (`hexo_bridge.ports.engine`): one async method, `get_move(state)
@@ -14,16 +33,55 @@ one-piece move to two before sending. Raise `EngineTranslationError` (or the
 `SubprocessEngineError` subclass) for a bridge-side translation failure; the
 bridge never scores it as an engine loss.
 
-Three tiers, cleanest path first for an existing engine.
+`GameState` carries: `side` (the side to move, from `move_request.side`), the
+board as `setup_cells` (the cells the server delivered in the `setup` packet)
+plus `moves` (the cumulative completed turns), the clock, and an optional
+`request_id`. The board the engine plays on is whatever the server delivered;
+the bridge does not bake in an origin.
 
-## Tier 1: the stdio adapter (zero Python for your engine)
+## Tier 1: htttx-stateless over HTTP (the portable boundary)
 
-You have an engine with a `reset` / `place` / `best_move` API in any language.
-Write a ~20-line shim that reads JSON lines from stdin and writes JSON lines to
-stdout, speaking this protocol:
+The engine is a separate HTTP service exposing the htttx stateless
+`/turn` endpoint. The bridge POSTs the board and reads back a move. This is the
+boundary to pick for a new engine in any language that should work
+ecosystem-wide: the same server speaks BSoD's ecosystem engine spec, so it works
+with any conformant client, not just this bridge.
+
+Use the shipped `htttx_stateless` adapter:
+
+```toml
+[engine]
+name = "htttx_stateless"
+[engine.options]
+base_url = "http://127.0.0.1:8080"
+# turn_path = "stateless/v1-alpha/turn"  # default; override via capabilities.json api_root
+timeout = 5.0
+```
+
+A tiny reference server (stdlib Python, no dependencies) lives at
+`examples/stateless_engine_reference.py`. Run it and dry-run the boundary:
+
+```sh
+python3 examples/stateless_engine_reference.py --port 8080
+hexo-bridge validate examples/config.stateless-engine.toml
+```
+
+A non-Python author implements the same `/turn` request/response shape in any
+language and host; the bridge does not care.
+
+## Tier 2: the stdio line protocol (the bridge-coupled, any-language boundary)
+
+You have an engine with a `reset` / `setup` / `place` / `best_move` API in any
+language. Write a small shim that reads JSON lines from stdin and writes JSON
+lines to stdout, speaking the versioned, language-agnostic contract in
+`docs/stdio-protocol.md`. The contract is fully documented there; an author in
+Rust, C++, or Go can implement it without reading any Python.
 
 ```
 adapter -> engine:  {"op": "reset"}
+engine -> adapter:  {"ok": true, "v": 1}
+
+adapter -> engine:  {"op": "setup", "cells": [[0, 0, "x"]]}
 engine -> adapter:  {"ok": true}
 
 adapter -> engine:  {"op": "place", "q": 1, "r": 0, "side": "o"}
@@ -35,12 +93,14 @@ engine -> adapter:  {"move": [[1, 0], [-1, 1]]}      # 1 or 2 coord pairs
 adapter -> engine:  {"op": "quit"}                    # engine exits
 ```
 
-`reset` seeds the opening cross at the origin (the server auto-plays it; the
-engine starts every game from that position). `place` applies one placement
-(`side` is given, no turn inference). `best_move` returns 1 or 2 coord pairs;
-one pair means the first stone won. The bridge pads a one-pair reply to a
-two-stone transport shape. A `time_ms` of 0 or omitted means "no budget"; the
-bridge's hard clamp is separate (see Think-time below).
+`reset` clears to an empty board and runs the version handshake (`v: 1`).
+`setup` applies the starting board the server delivered (the standard server
+sends one cross at the origin here; the bridge forwards whatever was
+delivered). `place` applies one placement (`side` is given, no turn inference).
+`best_move` returns 1 or 2 coord pairs; one pair means the first stone won. The
+bridge pads a one-pair reply to a two-stone transport shape. A `time_ms` of 0 or
+omitted means "no budget"; the bridge's hard clamp is separate (see Think-time
+below).
 
 Point the config at it:
 
@@ -55,14 +115,15 @@ time_budget_ms = 300
 # args = []                       # optional, appended to command
 ```
 
-The adapter re-syncs from scratch on every call: `reset` then replay the full
-cumulative move list. This is simple, correct, and recovers a crashed child
-transparently. If your engine is stateless-by-replay (it rebuilds the board
-from a move list each call), this tier and tier 2 both fit.
+The adapter re-syncs from scratch on every call: `reset`, then `setup` (when
+the server delivered a non-empty board), then replay the full cumulative move
+list, then `best_move`. This is simple, correct, and recovers a crashed child
+transparently.
 
-The full protocol is documented in `src/hexo_bridge/adapters/engines/stdio.py`.
+The full contract, framing, error and lifecycle behaviour, and a minimal engine
+shape are in `docs/stdio-protocol.md`.
 
-## Tier 2: SubprocessEngine subclass (native or foreign, custom protocol)
+## Tier 3: SubprocessEngine subclass (custom line protocol)
 
 When the stdio protocol does not fit (your engine speaks its own JSON shape, or
 you want a tighter integration), subclass `SubprocessEngine`
@@ -96,10 +157,14 @@ subprocess fails to import or crashes, the base raises a
 `SubprocessEngineError` carrying the captured stderr, so an ABI or import
 failure is debuggable instead of opaque.
 
+A subclass that invents its own line shape is coupled to this bridge (it is not
+the portable boundary). If portability matters, implement the stdio line
+protocol (tier 2) or htttx-stateless (tier 1) instead.
+
 Pass a `time_limit` field in the request as a suggested per-move budget; the
 bridge's hard clamp is separate (see Think-time below).
 
-## Tier 3: in-process pure Python
+## Tier 4: in-process pure Python
 
 For a Python-native engine or a quick stub, implement `EnginePort.get_move`
 directly. No I/O, no subprocess. See
@@ -118,13 +183,6 @@ class InProcessFirstMoveEngine:
         pieces = _pick_two_empty(state)
         return Move(side=side, pieces=pieces)
 ```
-
-## Tier 4: htttx stateless (network server)
-
-When the engine is a separate HTTP service speaking the htttx stateless
-`/turn` protocol, use the shipped `htttx_stateless` adapter. This is for an
-engine hosted as a network server, not a local process. See
-`src/hexo_bridge/adapters/engines/htttx_stateless.py`.
 
 ## Register it
 
@@ -165,7 +223,7 @@ double-clamp.
 
 ## Validate before going live
 
-Dry-run the configured engine once against an empty board, no server, no token:
+Dry-run the configured engine once, no server, no token:
 
 ```sh
 hexo-bridge validate config.toml
@@ -173,7 +231,15 @@ hexo-bridge validate config.toml
 
 It resolves the engine, spawns it, calls `get_move` once, prints the move and
 timing, and exits non-zero on failure (spawn error, ABI/import error, malformed
-response, timeout). Catches the failures that bite on first run in seconds.
+response, timeout). `validate` runs whichever boundary the config selects:
+
+- in-process: calls `get_move` directly;
+- subprocess/stdio: spawns the child, runs the version handshake, calls
+  `best_move`, and tears it down;
+- htttx-stateless: POSTs to the configured `/turn` URL (so a stateless engine
+  must be running for it to succeed).
+
+Catches the failures that bite on first run in seconds.
 
 List registered engine adapters:
 

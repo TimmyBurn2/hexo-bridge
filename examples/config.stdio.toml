@@ -1,10 +1,10 @@
 # hexo-bridge example: generic stdio line adapter.
 #
-# The clean path for an existing engine. Write a ~20-line shim that reads JSON
-# lines from stdin and writes JSON lines to stdout speaking the reset/place/
-# best_move protocol (see docs/write-your-own-adapter.md and
-# src/hexo_bridge/adapters/engines/stdio.py). Point this config at it; no
-# Python in hexo-bridge is needed for the engine itself.
+# The clean path for an existing engine. Write a small shim that reads JSON
+# lines from stdin and writes JSON lines to stdout speaking the versioned
+# reset/setup/place/best_move protocol (see docs/stdio-protocol.md and
+# docs/write-your-own-adapter.md). Point this config at it; no Python in
+# hexo-bridge is needed for the engine itself.
 #
 # Run offline against the loopback:
 #   uv run hexo-bridge examples/config.stdio.toml

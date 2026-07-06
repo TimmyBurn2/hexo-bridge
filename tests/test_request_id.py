@@ -235,3 +235,88 @@ async def test_setup_packet_invalidates_outstanding_request():
     await session.send_move_response(_move(), pkt.request_id)
     assert fake.sent == [], "answer after a setup packet must be dropped"
     await session.close()
+
+
+# --- Positional-only server (no request_id anywhere) -----------------------
+# A conformant server that never assigns request_id must still be playable to
+# completion: the adapter correlates positionally (one request outstanding).
+
+
+def _setup_non_origin() -> str:
+    """A setup packet delivering a non-[0,0] board, to prove the bridge consumes
+    whatever the server delivers rather than falling back to a baked-in origin."""
+    return json.dumps(
+        {
+            "type": "setup",
+            "board": {
+                "to_move": "o",
+                "cells": [{"q": 3, "r": -2, "p": "x"}],
+            },
+        }
+    )
+
+
+async def test_positional_only_server_plays_to_completion():
+    """The real openness test: a server that sends no request_id on any
+    move_request, and a setup packet that does NOT place the origin cross, must
+    still be playable. The adapter correlates positionally (one outstanding) and
+    the bridge builds the board from the delivered setup, not a baked-in origin.
+    """
+    inbox = [
+        _setup_non_origin(),
+        _move_request(None),  # first request, no id, previous empty
+        # The second request arrives only after the first is answered; pushed
+        # below.
+    ]
+    session, fake = await _start_session(inbox)
+    pkt = await _recv_move_request(session)
+    assert pkt.request_id is None
+    assert session._outstanding is True
+    # Answer positionally: no id to echo.
+    await session.send_move_response(_move(), None)
+    assert len(fake.sent) == 1, "positional answer must be sent"
+    resp = json.loads(fake.sent[0])
+    assert "request_id" not in resp, "no id was assigned; none must be echoed"
+
+    # Second request: still no id. The adapter must accept it and answer again.
+    fake.push(_move_request(None))
+    pkt2 = await _recv_move_request(session)
+    assert pkt2.request_id is None
+    await session.send_move_response(_move(), None)
+    assert len(fake.sent) == 2
+    await session.close()
+
+
+async def test_positional_interrupt_without_id_drops_outstanding():
+    """In positional mode (no ids), an interrupt carrying no request_id (the
+    spec only attaches one when request_id is in use) invalidates the single
+    outstanding request."""
+    session, fake = await _start_session([_move_request(None), _interrupt(None)])
+    pkt = await _recv_move_request(session)
+    assert pkt.request_id is None
+    await asyncio.sleep(0.01)
+    assert session._invalidated is True, "positional interrupt must invalidate"
+    await session.send_move_response(_move(), None)
+    assert fake.sent == [], "answer after a positional interrupt must be dropped"
+    await session.close()
+
+
+async def test_send_with_no_request_outstanding_is_dropped():
+    """An answer with no request outstanding (e.g. a stray late answer) is
+    dropped, not sent."""
+    session, fake = await _start_session([])
+    await session.send_move_response(_move(), None)
+    assert fake.sent == [], "answer with no outstanding request must be dropped"
+    await session.close()
+
+
+async def test_setup_with_non_origin_board_is_forwarded_unchanged():
+    """The adapter forwards whatever board the setup packet delivered; it does
+    not warn on or rewrite a non-[0,0] board."""
+    session, _fake = await _start_session([_setup_non_origin()])
+    pkt = await session.recv()
+    from hexo_bridge.ports.engine_session import SetupPacket
+
+    assert isinstance(pkt, SetupPacket)
+    assert pkt.board_cells == [(3, -2, "x")]
+    await session.close()

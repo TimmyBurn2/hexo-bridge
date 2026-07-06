@@ -85,9 +85,11 @@ class HtttxStatelessEngine:
         cells: list[BoardCell] = []
         for coord, side in board.cells.items():
             cells.append(BoardCell(q=coord.q, r=coord.r, p=side.value))
-        turn = board.turn_for(state.moves)
+        # The side to move is what the server stated in `move_request.side`,
+        # carried through as `state.side`. The bridge does not derive it from
+        # ply parity or an origin convention.
         htttx_board = HtttxBoard(
-            to_move=turn.side.value,
+            to_move=state.side.value,
             cells=cells,
         )
         return StatelessMoveRequest(

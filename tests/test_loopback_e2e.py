@@ -75,3 +75,57 @@ async def test_loopback_exercises_real_session_adapter(
     assert platform.events.exhausted is True
     assert platform.closed is True
     assert leaked == [], f"tasks leaked past shutdown: {leaked}"
+
+
+async def test_bridge_plays_positional_only_server_to_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real openness test: a conformant positional-only server (no
+    request_id on any move_request) must be playable to completion. The bridge
+    correlates positionally (one request outstanding); it does not require the
+    server to assign ids. This is exactly as open as the htttx spec."""
+    monkeypatch.delenv("HEXO_BRIDGE_TOKEN", raising=False)
+    cfg = load_config(EXAMPLES / "config.loopback.toml")
+    platform = LoopbackPlatform(
+        move_requests_per_game=2,
+        game_timeout_seconds=10.0,
+        send_request_id=False,
+    )
+    await asyncio.wait_for(run_bridge(cfg, platform=platform), timeout=15)
+
+    responses = platform.received_move_responses["loopback-1"]
+    assert len(responses) == 2, f"positional server should have received 2 answers: {responses}"
+    for r in responses:
+        assert r["type"] == "move_response"
+        assert "request_id" not in r, "no id was assigned; none must be echoed"
+        assert len(r["move"]["pieces"]) == 2
+    assert platform.events.exhausted is True
+
+
+async def test_bridge_consumes_non_origin_setup_board(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bridge builds the opening from the setup packet the server delivered,
+    not from a baked-in [0,0] origin. A server that delivers a different
+    starting position must be playable, and the engine's move must be a legal
+    two-stone shape (the in-process picker finds empty cells near the delivered
+    board, not near a baked-in origin)."""
+    monkeypatch.delenv("HEXO_BRIDGE_TOKEN", raising=False)
+    cfg = load_config(EXAMPLES / "config.loopback.toml")
+    platform = LoopbackPlatform(
+        move_requests_per_game=2,
+        game_timeout_seconds=10.0,
+        setup_cells=[(4, -2, "x"), (3, 1, "o")],
+    )
+    await asyncio.wait_for(run_bridge(cfg, platform=platform), timeout=15)
+
+    responses = platform.received_move_responses["loopback-1"]
+    assert len(responses) == 2, f"non-origin setup should have produced 2 answers: {responses}"
+    for r in responses:
+        pieces = r["move"]["pieces"]
+        assert len(pieces) == 2
+        # The engine must not have landed on either delivered cell: those are
+        # occupied by the setup. This proves the board was built from the
+        # delivered setup, not from a baked-in origin that would leave (4,-2)
+        # and (3,1) empty.
+        placed = {(p["q"], p["r"]) for p in pieces}
+        assert (4, -2) not in placed, "engine played on a setup-occupied cell"
+        assert (3, 1) not in placed, "engine played on a setup-occupied cell"

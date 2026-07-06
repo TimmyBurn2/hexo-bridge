@@ -162,10 +162,10 @@ async def test_one_piece_move_is_normalized_by_bridge_helper():
 
 _STDIO_SHIM = r"""
 import sys, json
-board = {(0,0): 'x'}  # opening seeded by reset
+board = {}
 def reset():
     global board
-    board = {(0,0): 'x'}
+    board = {}
 for line in sys.stdin:
     line = line.strip()
     if not line or line == 'quit':
@@ -174,12 +174,16 @@ for line in sys.stdin:
     op = req.get('op')
     if op == 'reset':
         reset()
+        sys.stdout.write(json.dumps({'ok': True, 'v': 1}) + '\n'); sys.stdout.flush()
+    elif op == 'setup':
+        for q, r, s in req.get('cells', []):
+            board[(q, r)] = s
         sys.stdout.write(json.dumps({'ok': True}) + '\n'); sys.stdout.flush()
     elif op == 'place':
         board[(req['q'], req['r'])] = req['side']
         sys.stdout.write(json.dumps({'ok': True}) + '\n'); sys.stdout.flush()
     elif op == 'best_move':
-        # Return two empty neighbours of the origin.
+        # Return two empty neighbours of the anchor.
         sys.stdout.write(json.dumps({'move': [[1, 0], [-1, 1]]}) + '\n'); sys.stdout.flush()
 """
 

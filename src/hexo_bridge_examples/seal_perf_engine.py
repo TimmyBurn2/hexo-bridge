@@ -8,10 +8,10 @@ it imports no htttx, HTTP, or HeXO types.
 
 SealBot-perf is a C++ pybind engine (`minimax_cpp`) built for CPython 3.14, while
 the bridge itself may run on a different CPython. To avoid an ABI mismatch, the
-engine runs in its own interpreter as a subprocess. The shim replays the ordered
-list of every placement so far (the origin first, then each completed turn's two
-stones) into SealBot's own `HexGame`, so this adapter never reimplements the
-rules, then returns the two stones of the next turn.
+engine runs in its own interpreter as a subprocess. The shim replays the board
+the server delivered in the `setup` packet (the seed), then each completed
+turn's two stones, into SealBot's own `HexGame`, so this adapter never
+reimplements the rules, then returns the two stones of the next turn.
 
 If the subprocess fails to import `minimax_cpp` or crashes, the base surfaces the
 captured stderr in a `SubprocessEngineError` instead of an opaque translation
@@ -54,6 +54,12 @@ for line in sys.stdin:
     req = json.loads(line)
     game = HexGame(win_length=6)
     game.reset()
+    # Apply the starting board the server delivered (the setup packet's cells),
+    # in order, as SealBot's own turn model would play them. The standard
+    # server delivers one cross at the origin here; the bridge passes whatever
+    # was delivered, so this does not bake in the origin.
+    for q, r in req.get("setup", []):
+        game.make_move(q, r)
     for q, r in req["moves"]:
         game.make_move(q, r)
     bot.time_limit = req.get("time_limit", time_limit)
@@ -81,10 +87,14 @@ class SealPerfEngine(SubprocessEngine):
         self._time_limit = time_limit
 
     def build_request(self, state: GameState) -> dict:
-        # Every placement so far, in play order: the server-placed origin first,
-        # then each completed turn's two stones. SealBot replays these to rebuild
-        # the position, then returns the two stones of the side to move (us).
-        placements: list[list[int]] = [[0, 0]]
+        # The board the bot plays on is whatever the server delivered in the
+        # `setup` packet (`state.setup_cells`), plus the cumulative completed
+        # turns (`state.moves`). The bridge does not bake in an origin; SealBot
+        # replays the delivered seed then each completed turn's two stones into
+        # its own `HexGame`, so this adapter never reimplements the rules, then
+        # returns the two stones of the next turn (us).
+        setup: list[list[int]] = [[q, r] for q, r, _ in state.setup_cells]
+        placements: list[list[int]] = []
         for move in state.moves:
             for piece in move.pieces:
                 placements.append([piece.q, piece.r])
@@ -94,7 +104,7 @@ class SealPerfEngine(SubprocessEngine):
         think_time = self._time_limit
         if state.time_limit_seconds is not None:
             think_time = min(think_time, state.time_limit_seconds)
-        return {"moves": placements, "time_limit": think_time}
+        return {"setup": setup, "moves": placements, "time_limit": think_time}
 
     def parse_response(self, obj: dict, state: GameState) -> Move:
         try:

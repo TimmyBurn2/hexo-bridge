@@ -1,19 +1,21 @@
-"""Board state, replay-from-cumulative-moves, and turn detection.
+"""Board state, replay-from-setup-and-moves, and occupancy tracking.
 
-Stateless: the board is rebuilt by replaying the cumulative move list on every
-stream line. Core does not reimplement legality or win detection; the server is
-the referee. Core rebuilds only enough board to feed the engine and to know whose
-turn it is.
+Stateless: the board is rebuilt by replaying the setup board plus the cumulative
+move list on every stream line. Core does not reimplement legality or win
+detection; the server is the referee. Core rebuilds only enough board to feed
+the engine.
 
-Ply convention (ground truth: Hexo-Bot-Api SERVER-NOTES.md item 3, resolved):
-- ply 0: the server auto-plays the opening, a single cross at the origin (0, 0).
-  A bot never submits it.
-- ply 1: p2's first turn, two stones.
-- ply 2: p1's first turn, two stones.
-- even ply >= 2: p1 (x) to move.
-- odd ply >= 1: p2 (o) to move.
+Server-neutral board model. The opening position is NOT baked in here. The board
+the bot plays on is whatever the server delivered in the htttx `setup` packet
+(`setup.board.cells`); the bridge carries that seed through `GameState.setup_cells`
+and replays the cumulative moves on top of it. The standard HeXO server delivers
+exactly one cross at the origin in that packet; a conformant server is free to
+deliver a different starting position (under `free_setup`), and the bridge will
+play it as delivered rather than falling back to a baked-in origin.
 
-So with the opening seeded, p1 moves on even ply, p2 moves on odd ply.
+Side to move is NOT derived here. Per the htttx spec the server states which side
+to play in each `move_request.side`; the bridge passes that through as
+`GameState.side`. There is no ply-parity turn convention in core.
 """
 
 from __future__ import annotations
@@ -23,43 +25,36 @@ from dataclasses import dataclass, field
 
 from hexo_bridge.core.move import Coord, Move, Side
 
-ORIGIN = Coord(0, 0)
-
-
-@dataclass(frozen=True)
-class Turn:
-    """Whose turn it is at a given ply, and the side mapped to the engine alphabet.
-
-    `side` is the engine side (x/o) to move. `ply` is the cumulative turn count
-    (0 = opening already placed, no move to make).
-    """
-
-    ply: int
-    side: Side
-
-    @property
-    def is_opening(self) -> bool:
-        """True at ply 0, where only the server-placed opening stone exists."""
-        return self.ply == 0
+SetupCell = tuple[int, int, str]
+"""A board cell delivered in the htttx `setup` packet: (q, r, side) where side
+is the engine alphabet ('x' or 'o'). The bridge consumes whatever the server
+delivers; it does not require these to be the single origin cross."""
 
 
 @dataclass
 class GameState:
     """Full game state the bridge feeds to an engine.
 
-    `moves` is the cumulative move list as the server reports it. The board is
-    derived by replaying it on top of the seeded opening.
+    `setup_cells` is the board the server delivered in the `setup` packet, as a
+    list of (q, r, side) cells. It is the seed the cumulative `moves` are
+    replayed on top of. Empty when no setup packet has been seen (e.g. the
+    offline `validate` dry-run, which plays on an empty board).
+
+    `moves` is the cumulative move list as the server reports it (the completed
+    two-stone turns, excluding the setup seed). The board is derived by
+    replaying `moves` on top of `setup_cells`.
+
+    `side` is the side this bot plays for this request, taken from
+    `move_request.side`. The adapter maps the platform's p1/p2 to x/o at the
+    boundary; core never sees p1/p2.
 
     This object is the value an `EnginePort.get_move` receives. It carries no
     I/O and no platform or engine-transport types.
     """
 
     side: Side
-    """The side this bot plays. The adapter maps the platform's p1/p2 to x/o."""
-
+    setup_cells: list[SetupCell] = field(default_factory=list)
     moves: list[Move] = field(default_factory=list)
-    """Cumulative moves in order, excluding the server-placed opening at ply 0."""
-
     moves_to_apply: list[Move] = field(default_factory=list)
     """Moves played since the last engine request (htttx `previous`). Empty if
     this is the engine's first move for this game. Mirrors the htttx move_request
@@ -74,16 +69,19 @@ class GameState:
     the hard bound."""
 
     request_id: int | None = None
-    """Optional per-request id for answer-matching on transports that support it."""
+    """Optional per-request id for answer-matching on transports that support it.
+
+    Echoed unchanged on the answering move_response when present. When absent,
+    the session correlates positionally (at most one request outstanding)."""
 
     def to_board(self) -> Board:
-        """Build a Board by replaying the opening plus the cumulative moves."""
-        return Board.replay(self.moves)
+        """Build a Board by replaying the setup seed plus the cumulative moves."""
+        return Board.replay(self.setup_cells, self.moves)
 
 
 @dataclass
 class Board:
-    """A board state, rebuilt from the opening plus a cumulative move list.
+    """A board state, rebuilt from the setup seed plus a cumulative move list.
 
     The board is a dict from Coord to the Side occupying it. Core does not
     validate legality (the server does) and does not detect wins (the server
@@ -97,22 +95,32 @@ class Board:
         return cls(cells={})
 
     @classmethod
-    def with_opening(cls) -> Board:
-        """The board after the server auto-plays the opening at the origin.
+    def from_cells(cls, cells: Sequence[SetupCell]) -> Board:
+        """Build the seed board from the setup packet's cells.
 
-        The opening is one cross at (0, 0). A bot never submits it.
+        `cells` is a list of (q, r, side) tuples as delivered by the server.
+        The bridge consumes whatever is delivered; it does not require the
+        single origin cross.
         """
-        return cls(cells={ORIGIN: Side.X})
+        board = cls.empty()
+        for q, r, side in cells:
+            board.cells[Coord(q, r)] = Side(side)
+        return board
 
     @classmethod
-    def replay(cls, moves: Sequence[Move]) -> Board:
-        """Rebuild the board by seeding the opening then replaying each move.
+    def replay(
+        cls, setup_cells: Sequence[SetupCell], moves: Sequence[Move]
+    ) -> Board:
+        """Rebuild the board: seed from the setup packet, then replay each move.
 
-        The opening is always seeded first: per SERVER-NOTES item 3 the server
-        auto-plays the single centre stone at the origin before either side
-        moves, and the move list the server reports does not include it.
+        The seed is exactly the `setup.board.cells` the server delivered. The
+        moves list is the completed turns the server reports in
+        `move_request.previous` over the life of the session; it excludes the
+        setup seed. A conformant server delivers the seed in the setup packet,
+        not in the move ledger, so replaying moves on top of the seed is
+        correct without double-counting.
         """
-        board = cls.with_opening()
+        board = cls.from_cells(setup_cells)
         for move in moves:
             board._apply(move)
         return board
@@ -126,21 +134,6 @@ class Board:
 
     def side_at(self, coord: Coord) -> Side | None:
         return self.cells.get(coord)
-
-    @classmethod
-    def turn_for(cls, moves: Sequence[Move]) -> Turn:
-        """Whose turn it is given the cumulative move list (opening assumed placed).
-
-        The opening is ply 0: the server placed one cross at the origin. The
-        moves list excludes that opening. So len(moves)=0 means the opening is
-        placed and it is O's turn (ply 1 is the first submitted turn, played by
-        p2/O). len(moves)=1 means one submitted turn (O's), and it is X's turn.
-
-        Even len(moves) -> O to move. Odd len(moves) -> X to move.
-        """
-        ply = len(moves)
-        side = Side.X if ply % 2 == 1 else Side.O
-        return Turn(ply=ply, side=side)
 
     @classmethod
     def moves_since(cls, all_moves: Sequence[Move], after_index: int) -> list[Move]:

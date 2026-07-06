@@ -67,16 +67,35 @@ pinned in `pyproject.toml` under `[tool.hexo_bridge.specs]`, parses every spec
 example against the matching model, and asserts the discriminator enums the bridge
 branches on still match. That replaces the drift gate.
 
-## 4. Setup packet board is assumed standard
+## 4. Setup packet board is consumed as delivered
 
-**Status: assumption, documented in `engine_sessions/htttx_websocket.py`.**
+**Status: resolved. The bridge plays on whatever the server delivers.**
 
-The bridge assumes the setup packet's board is the standard opening (one cross
-at origin). If the server sends a non-standard setup (the `free_setup`
-capability), the bridge logs a warning but still plays on the standard board.
-A full fix honors `SetupPacket.board_cells` when non-empty, but this requires
-the bridge to support arbitrary starting positions, which the core `Board.replay`
-does not currently model (it always seeds `with_opening()`).
+The bridge no longer assumes the setup packet's board is the standard opening.
+`Board.replay(setup_cells, moves)` seeds from the delivered `setup.board.cells`
+and replays the cumulative moves on top of it. The standard server delivers one
+cross at the origin there; a conformant server may deliver a different starting
+position under `free_setup`, and the bridge plays it as delivered. No origin is
+baked in. The bridge's `run_game` captures the `setup` packet into
+`GameContext.setup_cells` and re-syncs on any re-setup. Documented in
+`core/board.py` and `adapters/engine_sessions/htttx_websocket.py`; covered by
+`test_bridge_consumes_non_origin_setup_board`.
+
+## 6. Server follow-up: infhex requires request_id though the spec does not
+
+**Status: server follow-up, not a bridge or spec change.**
+
+The open htttx spec makes `request_id` optional (capability-gated); the open
+HeXO spec, after the reframe in this pass, requires only the safety property
+(echo when present, positional correlation when absent). The reference server
+(`infhex-tic-tac-toe`, `spike/bot-api`) is currently stricter than the open
+spec: it assigns `request_id` on every `move_request` and expects it echoed.
+That is a server convention the bridge honours in practice (the adapter echoes
+whatever id arrives), but it is not part of the open wire contract, so the
+bridge also plays a positional-only conformant server to completion. Recorded
+as a server follow-up: the server may relax to the open spec's positional mode
+without any bridge change. Not fixed here (the server repo is not edited in
+this pass).
 
 ## 5. Package name not finalized
 
