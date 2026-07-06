@@ -234,3 +234,77 @@ def test_validate_cli_smoke(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
         assert exc.code == 0
     else:
         pytest.fail("validate did not exit")
+
+
+def test_validate_cli_kills_hung_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`validate` must not leak a hung child: on timeout it kills the process
+    via the same-loop close() path, not leave it running."""
+    from hexo_bridge.cli import main
+
+    hang_shim = (
+        "import sys,time; sys.stderr.write('hang shim\\n'); sys.stderr.flush(); time.sleep(60)"
+    )
+    cfg = tmp_path / "hang.toml"
+    cfg.write_text(
+        "[platform]\nname='loopback'\n"
+        "[engine]\nname='stdio'\n"
+        f'[engine.options]\ncommand=["{sys.executable}", "-c", "{hang_shim}"]\n'
+        "time_budget_ms=100\n"
+        "[engine_session]\nname='htttx_websocket'\n"
+        "[bridge]\nengine_timeout_seconds=1.0\n"
+    )
+    monkeypatch.setattr(sys, "argv", ["hexo-bridge", "validate", str(cfg)])
+    code = 0
+    try:
+        main()
+    except SystemExit as exc:
+        code = exc.code or 0
+    assert code == 1, f"validate should exit 1 on a hung child, got {code}"
+    # No leftover python child sleeping for 60s.
+    leftover = [p for p in __import__("subprocess").run(
+        ["pgrep", "-f", "time.sleep(60)"], capture_output=True, text=True
+    ).stdout.split() if p]
+    assert not leftover, f"validate leaked a hung child: {leftover}"
+
+
+# --- think-time clamp edge cases (B4) --------------------------------------
+
+
+async def test_bridge_clamp_treats_zero_clock_as_expired_not_unlimited():
+    """`time_limit_seconds == 0.0` means the clock has expired, not 'no clock'.
+    The bridge must clamp to 0 (not fall back to engine_timeout) so the engine
+    call does not run past an already-expired clock."""
+    from hexo_bridge.bridge import _handle_move_request
+    from hexo_bridge.core.move import Coord
+    from hexo_bridge.core.move import Move as CoreMove
+    from hexo_bridge.ports.engine_session import MoveRequestPacket
+
+    class _CapturingEngine:
+        def __init__(self):
+            self.called = False
+
+        async def get_move(self, state):
+            self.called = True
+            return CoreMove(state.side, (Coord(1, 0), Coord(-1, 1)))
+
+    class _DummySession:
+        async def __aenter__(self):
+            return self
+
+        async def send_move_response(self, move, request_id):
+            pass
+
+        async def close(self):
+            pass
+
+    ctx = type("C", (), {})()
+
+    from hexo_bridge.bridge import GameContext
+
+    ctx = GameContext(game_id="t", side=Side.O, session=_DummySession(), engine=_CapturingEngine())
+    packet = MoveRequestPacket(side=Side.O, previous=[], time_limit_seconds=0.0, request_id=1)
+    await _handle_move_request(ctx, packet, 5.0)
+    # With a 0.0 clock the engine call is clamped to 0; asyncio.wait_for(...,0)
+    # raises TimeoutError before the engine runs, so the engine is never called
+    # and no move is sent.
+    assert ctx.engine.called is False

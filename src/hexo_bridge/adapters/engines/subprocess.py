@@ -17,16 +17,25 @@ The base owns:
   - a per-instance asyncio.Lock so concurrent `get_move` calls do not
     interleave on the pipe.
 
-The base does NOT clamp think-time. The bridge's `asyncio.wait_for` is the
-hard bound on the engine call (clamped to `min(engine_timeout, clock)`). A
-subclass MAY include a `time_limit` field in its request payload as a
-suggested per-move budget; that is a hint the subclass sets, not a clamp.
+    The base does NOT clamp think-time. The bridge's `asyncio.wait_for` is the
+    hard bound on the engine call (clamped to `min(engine_timeout, clock)`). A
+    subclass MAY include a `time_limit` field in its request payload as a
+    suggested per-move budget; that is a hint the subclass sets, not a clamp.
 
-Subclass contract: override `build_request(state) -> dict` and
-`parse_response(obj, state) -> Move`. `parse_response` may return a `Move`
-of one or two pieces; the bridge normalizes a one-piece move to two before
-it is sent on the wire.
-"""
+    Concurrency: the bridge builds ONE engine instance shared across all games
+    (see `bridge.run_bridge`). The per-instance `asyncio.Lock` serializes
+    concurrent `get_move` calls on the single stdin/stdout pipe, so with N
+    concurrent games a slow game A holds the lock and game B's call blocks
+    behind it, counting against B's turn clock. If B's clock expires while
+    waiting, B forfeits without ever calling its engine. For a real engine with
+    sub-second think times this is fine; for a slow engine under many concurrent
+    games, run one bridge process per game (one engine instance each) instead.
+
+    Subclass contract: override `build_request(state) -> dict` and
+    `parse_response(obj, state) -> Move`. `parse_response` may return a `Move`
+    of one or two pieces; the bridge normalizes a one-piece move to two before
+    it is sent on the wire.
+    """
 
 from __future__ import annotations
 
@@ -138,18 +147,28 @@ class SubprocessEngine:
     async def _drain_stderr(self) -> str | None:
         """Read whatever stderr the child has buffered, with a short timeout.
 
-        A hung child must not wedge the bridge: 0.5s is enough to capture an
-        import traceback or an ABI error message without blocking on a child
-        that is stuck but alive.
+        Reads line-by-line until EOF or a 0.5s total bound. A dead child closes
+        stderr quickly and the full traceback is returned. A hung-but-alive
+        child flushing slowly is cut at 0.5s; whatever it already flushed is
+        returned (better than the old `read()` which discarded everything on
+        timeout). 0.5s is a default chosen to capture an import/ABI traceback
+        without wedging the bridge on a child that is stuck but alive.
         """
         proc = self._proc
         if proc is None or proc.stderr is None:
             return None
+        lines: list[str] = []
         try:
-            data = await asyncio.wait_for(proc.stderr.read(), timeout=0.5)
-        except (TimeoutError, Exception):
+            while True:
+                line = await asyncio.wait_for(proc.stderr.readline(), timeout=0.5)
+                if not line:
+                    break
+                lines.append(line.decode(errors="replace"))
+        except TimeoutError:
+            pass
+        except Exception:
             return None
-        text = data.decode(errors="replace").strip()
+        text = "".join(lines).strip()
         return text or None
 
     async def _kill(self, proc: asyncio.subprocess.Process) -> None:
@@ -168,10 +187,10 @@ class SubprocessEngine:
                 try:
                     proc.stdin.write(b"quit\n")
                     await proc.stdin.drain()
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, RuntimeError):
                     pass
                 proc.stdin.close()
             if proc.returncode is None:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
-        except (TimeoutError, ProcessLookupError, BrokenPipeError):
+        except (TimeoutError, ProcessLookupError, BrokenPipeError, RuntimeError):
             await self._kill(proc)

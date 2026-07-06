@@ -174,7 +174,12 @@ async def _handle_move_request(
     # ignores any suggested budget cannot blow the turn. A budget an engine sets
     # for itself (e.g. a SubprocessEngine `time_limit` field in its request) is a
     # hint; it is not clamped here.
-    timeout = min(engine_timeout, time_limit) if time_limit else engine_timeout
+    #
+    # `time_limit is None` means no server clock (use engine_timeout). A value
+    # of 0.0 means the clock has expired this turn: clamp to 0 so the call does
+    # not run past an already-expired clock (the server will time us out
+    # anyway). `if time_limit` would wrongly treat 0.0 as "no clock".
+    timeout = min(engine_timeout, time_limit) if time_limit is not None else engine_timeout
 
     state = GameState(
         side=ctx.side,

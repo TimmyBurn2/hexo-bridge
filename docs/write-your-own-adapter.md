@@ -55,10 +55,10 @@ time_budget_ms = 300
 # args = []                       # optional, appended to command
 ```
 
-The adapter is stateful: it `place`s incrementally and only `reset`s on first
-connect or after the base restarts a crashed child. If your engine is
-stateless-by-replay (it rebuilds the board from a move list each call), use
-tier 2 instead.
+The adapter re-syncs from scratch on every call: `reset` then replay the full
+cumulative move list. This is simple, correct, and recovers a crashed child
+transparently. If your engine is stateless-by-replay (it rebuilds the board
+from a move list each call), this tier and tier 2 both fit.
 
 The full protocol is documented in `src/hexo_bridge/adapters/engines/stdio.py`.
 
