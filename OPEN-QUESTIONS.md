@@ -103,3 +103,24 @@ this pass).
 
 The package is `hexo_bridge` (distribution `hexo-bridge`). The dispatcher
 flagged it as the user's to finalize. No PyPI claim has been checked.
+
+## 7. cumulative_moves not rebased on a terminated (interrupted) evaluation
+
+**Status: open question, not blocking.**
+
+The bridge appends `move_request.previous` to `cumulative_moves` on every
+request and only re-syncs on a fresh `setup`. The htttx bws spec permits the
+client to re-include moves in `previous` after a terminated (interrupted)
+evaluation (`bws-v1-alpha.yaml` `MoveRequestPacket.previous`): "The client must
+not include any moves that have been sent already via board setup or other move
+requests, unless the evaluation of the previous move has been terminated." A
+conformant server exercising that could cause a move to be appended twice. The
+in-process and htttx-stateless paths are idempotent (dict overwrite in
+`Board._apply`), but the stdio path re-`place`s every move in `state.moves` on
+each call, and a conformant engine shim may reject a `place` on an
+already-occupied cell. The reference server does not trigger this. Open
+question: should the bridge rebase `cumulative_moves` on an `interrupt`, or
+track applied moves to deduplicate? Currently it trusts `previous` is a strict
+delta (true for the reference server and the common case where the server sends
+the next request only after the previous is answered or interrupted-and-abandoned
+without re-inclusion).

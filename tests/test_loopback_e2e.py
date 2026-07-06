@@ -129,3 +129,14 @@ async def test_bridge_consumes_non_origin_setup_board(monkeypatch: pytest.Monkey
         placed = {(p["q"], p["r"]) for p in pieces}
         assert (4, -2) not in placed, "engine played on a setup-occupied cell"
         assert (3, 1) not in placed, "engine played on a setup-occupied cell"
+    # The OPENING move (first response) is played on a board that is exactly
+    # the delivered setup (no moves yet). The in-process engine anchors on the
+    # centroid of occupied cells, so its first piece must land near the setup
+    # centroid, not near a baked-in (0,0) origin. An empty-board fallback would
+    # anchor at (0,0) and pick (0,0); the setup centroid is (3, ~0), so a
+    # first piece near there locks in that the board was built from the setup.
+    first_pieces = responses[0]["move"]["pieces"]
+    first = first_pieces[0]
+    assert abs(first["q"] - 3) + abs(first["r"]) <= 2, (
+        f"engine anchored near a baked-in origin, not the setup centroid: {first}"
+    )

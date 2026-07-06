@@ -108,7 +108,6 @@ class GameContext:
     session: EngineSessionPort
     engine: EnginePort
     setup_cells: list[tuple[int, int, str]] = None  # type: ignore[assignment]
-    moves_seen: int = 0
     cumulative_moves: list[Move] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
@@ -175,7 +174,6 @@ def _handle_setup(ctx: GameContext, packet: SetupPacket) -> None:
     """
     ctx.setup_cells = list(packet.board_cells)
     ctx.cumulative_moves = []
-    ctx.moves_seen = 0
     logger.info(
         "game %s: setup delivered %d cell(s); board re-synced from setup",
         ctx.game_id,
@@ -216,7 +214,6 @@ async def _handle_move_request(
         p1 = (pieces[0][0], pieces[0][1])
         p2 = (pieces[1][0], pieces[1][1])
         ctx.cumulative_moves.append(Move(side=mv_side, pieces=(Coord(*p1), Coord(*p2))))
-        ctx.moves_seen += 1
 
     if packet.side is not ctx.side:
         return

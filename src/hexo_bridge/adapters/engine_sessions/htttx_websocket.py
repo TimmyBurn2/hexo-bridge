@@ -279,6 +279,13 @@ class HtttxWebsocketSession:
             # not advertise config support). Keep the connection open.
             logger.debug("engine session: received config packet, ignoring")
             return HeartbeatP(waiting=False)
+        elif ptype == "eval_request":
+            # The bridge does not advertise the evaluation capability, so a
+            # conformant server will not send this. Tolerate it as a no-op
+            # rather than closing the session, so a noisy server does not end
+            # the game over a packet the bridge simply does not implement.
+            logger.debug("engine session: received eval_request packet, ignoring")
+            return HeartbeatP(waiting=False)
         else:
             logger.warning("engine session: unknown packet type: %s", ptype)
             return SessionClosed(reason=f"unknown packet type: {ptype}")
