@@ -3,7 +3,9 @@
 Covers the red-team findings:
   - `stream_read_timeout_seconds` (a `[bridge]`-level concern) is threaded into
     the platform adapter as `stream_read_timeout`, not silently ignored.
-  - A missing token raises a clear ValueError, not an opaque TypeError.
+  - The token requirement is the HeXO adapter's, not the bridge's: a missing
+    token raises a clear ValueError from HeXOPlatform (not an opaque
+    TypeError), and env-over-file precedence is resolved there too.
   - Each shipped example config constructs the full platform/engine/session
     stack (with a stub token), not just resolves the classes. This catches
     dead config fields and type-coercion gaps that pure resolution misses.
@@ -43,11 +45,32 @@ async def test_build_platform_overrides_stream_read_timeout_from_options(
 
 
 def test_build_platform_raises_clear_error_when_no_token(monkeypatch: pytest.MonkeyPatch):
+    """The error comes from HeXOPlatform itself; build_platform has no token gate."""
     monkeypatch.delenv("HEXO_BRIDGE_TOKEN", raising=False)
     cfg = load_config(EXAMPLES / "config.in-process.toml")
     cfg.platform.options.pop("token", None)
     with pytest.raises(ValueError, match="no HeXO token"):
         build_platform(cfg)
+
+
+async def test_hexo_env_token_takes_precedence_over_file(monkeypatch: pytest.MonkeyPatch):
+    """HeXOPlatform resolves HEXO_BRIDGE_TOKEN over the constructor argument,
+    so secrets stay in the environment, not on disk."""
+    from hexo_bridge.adapters.platforms.hexo import HeXOPlatform
+
+    monkeypatch.setenv("HEXO_BRIDGE_TOKEN", "hxo_from_env")
+    platform = HeXOPlatform(base_url="https://hexo.invalid", token="hxo_from_file")
+    assert platform._client.headers["Authorization"] == "Bearer hxo_from_env"
+    await platform.close()
+
+
+async def test_hexo_file_token_used_when_env_unset(monkeypatch: pytest.MonkeyPatch):
+    from hexo_bridge.adapters.platforms.hexo import HeXOPlatform
+
+    monkeypatch.delenv("HEXO_BRIDGE_TOKEN", raising=False)
+    platform = HeXOPlatform(base_url="https://hexo.invalid", token="hxo_from_file")
+    assert platform._client.headers["Authorization"] == "Bearer hxo_from_file"
+    await platform.close()
 
 
 @pytest.mark.parametrize("name", EXAMPLE_CONFIGS)

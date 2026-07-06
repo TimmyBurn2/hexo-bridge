@@ -2,8 +2,9 @@
 
 Covers:
   - Basic config parsing.
-  - Token from environment takes precedence over file.
-  - Token from file works when env is unset.
+  - The loader is platform-neutral: a file token passes through untouched and
+    the environment is never consulted (HEXO_BRIDGE_TOKEN is the HeXO
+    adapter's concern, resolved in HeXOPlatform, see test_builders.py).
   - Defaults for bridge timing.
 """
 
@@ -46,7 +47,9 @@ name = "htttx_websocket"
     assert cfg.engine_session.name == "htttx_websocket"
 
 
-def test_token_from_env_takes_precedence(tmp_path, monkeypatch):
+def test_env_token_is_not_injected_by_the_loader(tmp_path, monkeypatch):
+    """HEXO_BRIDGE_TOKEN belongs to the HeXO adapter. The loader must not read
+    it, or a stray env token would leak into every platform's constructor."""
     cfg_path = _write_config(
         tmp_path,
         """
@@ -59,10 +62,10 @@ token = "hxo_from_file"
     )
     monkeypatch.setenv("HEXO_BRIDGE_TOKEN", "hxo_from_env")
     cfg = load_config(cfg_path)
-    assert cfg.platform.options["token"] == "hxo_from_env"
+    assert cfg.platform.options["token"] == "hxo_from_file"
 
 
-def test_token_from_file_when_env_unset(tmp_path, monkeypatch):
+def test_file_token_passes_through(tmp_path, monkeypatch):
     cfg_path = _write_config(
         tmp_path,
         """

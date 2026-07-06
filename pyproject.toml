@@ -28,6 +28,8 @@ htttx_websocket = "hexo_bridge.adapters.engine_sessions.htttx_websocket:HtttxWeb
 
 [project.entry-points."hexo_bridge.platforms"]
 hexo = "hexo_bridge.adapters.platforms.hexo:HeXOPlatform"
+# Offline test harness, not a server. See adapters/platforms/loopback.py.
+loopback = "hexo_bridge.adapters.platforms.loopback:LoopbackPlatform"
 
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]

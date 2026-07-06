@@ -48,6 +48,11 @@ class EventsPort(Protocol):
     previous one for the same token (SERVER-NOTES: event-stream supersede). A
     blank-line keepalive arrives at least every 15 seconds; the adapter skips
     blank lines. On a dropped stream, the bridge reconnects with backoff.
+
+    Optional attribute `exhausted` (bool): a platform with a finite event
+    supply sets it True when nothing more will ever be streamed, and the
+    bridge shuts down instead of reconnecting. Absent means never exhausted
+    (HeXO does not define it).
     """
 
     def stream_events(self) -> AsyncIterator[Event]:
