@@ -25,7 +25,7 @@ from pathlib import Path
 
 from hexo_bridge.bridge import build_engine
 from hexo_bridge.core.board import GameState
-from hexo_bridge.core.move import Side, normalize_move
+from hexo_bridge.core.move import Move, Side, normalize_move
 from hexo_bridge.ports.engine import EngineTranslationError
 from hexo_bridge.registry.config import load_config
 from hexo_bridge.registry.resolver import (
@@ -115,12 +115,16 @@ def _validate(config_path: Path) -> int:
         print(f"FAILED: engine constructor error: {exc}", file=sys.stderr)
         return 1
 
+    # Run get_move and close() in the SAME event loop so the subprocess
+    # transports stay bound to a live loop. A cross-loop close() would raise
+    # RuntimeError on drain() and leak the child (the failure path `validate`
+    # is meant to diagnose).
     timeout = config.engine_timeout_seconds
     import time
 
     start = time.perf_counter()
     try:
-        move = asyncio.run(asyncio.wait_for(engine.get_move(state), timeout=timeout))
+        move = asyncio.run(_validate_run(engine, state, timeout))
     except EngineTranslationError as exc:
         elapsed = time.perf_counter() - start
         print(f"FAILED after {elapsed:.2f}s: {exc}", file=sys.stderr)
@@ -133,13 +137,6 @@ def _validate(config_path: Path) -> int:
         elapsed = time.perf_counter() - start
         print(f"FAILED after {elapsed:.2f}s: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    finally:
-        close = getattr(engine, "close", None)
-        if close is not None:
-            try:
-                asyncio.run(close())
-            except Exception:
-                pass
 
     if len(move.pieces) == 1:
         move = normalize_move(move, state.to_board())
@@ -150,6 +147,23 @@ def _validate(config_path: Path) -> int:
     print(f"elapsed: {elapsed:.2f}s")
     print("OK")
     return 0
+
+
+async def _validate_run(engine, state: GameState, timeout: float) -> Move:
+    """Run get_move then close() in one event loop so the child is cleaned up.
+
+    On timeout or failure `close()` still runs (the `finally`), so a hung child
+    is killed via `SubprocessEngine.close()` -> `_kill`, not leaked.
+    """
+    try:
+        return await asyncio.wait_for(engine.get_move(state), timeout=timeout)
+    finally:
+        close = getattr(engine, "close", None)
+        if close is not None:
+            try:
+                await close()
+            except Exception:
+                pass
 
 
 def _engines(args: argparse.Namespace) -> int:

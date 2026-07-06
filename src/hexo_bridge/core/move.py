@@ -114,17 +114,40 @@ def normalize_move(move: Move, board) -> Move:
     helper pads such a move with a distinct empty neighbour so the transport
     carries a legal shape. Two-piece moves pass through unchanged.
 
-    `board` is the rebuilt `Board` (core.board.Board) for the position the move
-    is being made on, used to pick a filler that is not already occupied.
+    Every candidate filler is checked for occupancy on the rebuilt board. If
+    the engine was wrong about the first stone winning and the filler lands on
+    an occupied cell, the server would forfeit the bot as illegal-move, so the
+    filler MUST be empty. Falls back to a widening spiral if the three cardinal
+    neighbours are all occupied; raises only if no empty cell exists.
     """
     if len(move.pieces) == 2:
         return move
     if len(move.pieces) != 1:
         raise ValueError(f"normalize_move expects 1 or 2 pieces, got {len(move.pieces)}")
     first = move.pieces[0]
-    for cand in (Coord(first.q + 1, first.r), Coord(first.q, first.r + 1), Coord(first.q - 1, first.r)):
+    # Try the cardinal neighbours first, then a widening spiral for a nearly
+    # full board. Every candidate is checked for occupancy; no fallback skips
+    # the check (an occupied filler would forfeit illegal-move).
+    candidates = [
+        Coord(first.q + 1, first.r),
+        Coord(first.q, first.r + 1),
+        Coord(first.q - 1, first.r),
+        Coord(first.q, first.r - 1),
+        Coord(first.q + 1, first.r + 1),
+        Coord(first.q - 1, first.r - 1),
+        Coord(first.q + 1, first.r - 1),
+        Coord(first.q - 1, first.r + 1),
+    ]
+    for cand in candidates:
         if cand != first and not board.occupied(cand):
             return Move(side=move.side, pieces=(first, cand))
-    # Last resort: any distinct cell. The server ignores it; this only needs a
-    # legal shape, and the game is already won on the first stone.
-    return Move(side=move.side, pieces=(first, Coord(first.q + 1, first.r + 1)))
+    # Last resort: any empty cell in a spiral out to a bounded radius.
+    for radius in range(2, 6):
+        for dq in range(-radius, radius + 1):
+            for dr in range(-radius, radius + 1):
+                if abs(dq + dr) > radius:
+                    continue
+                cand = Coord(first.q + dq, first.r + dr)
+                if cand != first and not board.occupied(cand):
+                    return Move(side=move.side, pieces=(first, cand))
+    raise ValueError(f"no empty neighbour to pad single-stone move at {first}")

@@ -30,11 +30,11 @@ Requests (adapter -> engine):
 A malformed reply or a missing field is a `SubprocessEngineError` carrying the
 captured child stderr.
 
-The adapter is stateful between move requests: it `place`s incrementally and
-only `reset`s on first connect or after the base restarts a crashed child. This
-mirrors how a real engine works and avoids a full replay each turn. On restart
-the next `get_move` unconditionally `reset`s and replays the cumulative move
-list, so a crashed child is recovered without the caller knowing.
+The adapter re-syncs from scratch on every `get_move` call: it sends `reset`
+then replays the cumulative move list via `place`. This is simple and correct
+(the cost is microseconds for a real engine) and means a crashed-and-restarted
+child is recovered transparently on the next call, with no incremental-state
+bookkeeping to get wrong.
 """
 
 from __future__ import annotations
@@ -79,9 +79,6 @@ class StdioLineEngine(SubprocessEngine):
             restart=True,
         )
         self._time_budget_ms = time_budget_ms
-        # 0 = not yet synced (needs reset + replay), 1 = synced to the current
-        # cumulative state. Cleared on restart so the next get_move replays.
-        self._synced = False
 
     async def get_move(self, state: GameState) -> Move:
         await self._sync(state)
@@ -106,18 +103,15 @@ class StdioLineEngine(SubprocessEngine):
         return Move(side=state.side, pieces=coords)
 
     async def _sync(self, state: GameState) -> None:
-        """Rebuild the engine's board to match the cumulative state.
+        """Rebuild the engine's board from scratch on every call.
 
-        On first call or after a restart, `reset` and replay every placement
-        (the opening at origin is seeded by the engine's `reset`; the cumulative
-        moves list excludes it, per core convention). After a successful sync,
-        incremental `place` calls are NOT tracked across requests: the adapter
-        re-syncs from scratch every call. This is simpler and correct; the cost
-        is a full replay each turn, which a real engine handles in microseconds.
-        Stateful incremental mode is a future optimization.
+        Sends `reset` (the engine seeds the opening at the origin) then replays
+        every placement in `state.moves` (which excludes the opening, per core
+        convention). Full replay every call is simple and correct; a crashed
+        child is recovered transparently because the next call resets and
+        replays unconditionally.
         """
         await self._send({"op": "reset"})
         for mv in state.moves:
             for piece in mv.pieces:
                 await self._send({"op": "place", "q": piece.q, "r": piece.r, "side": mv.side.value})
-        self._synced = True

@@ -223,8 +223,10 @@ class HtttxWebsocketSession:
             side = Side(validated.side)
             previous: list[tuple[Side, tuple[tuple[int, int], tuple[int, int]]]] = []
             for mv in validated.previous or []:
-                if len(mv.pieces) != 2:
-                    continue
+                # The htttx Move model enforces exactly two pieces; a malformed
+                # entry would have failed model_validate above. The opening is
+                # delivered in the setup packet, not in previous, so every
+                # previous entry is a completed two-stone turn.
                 mv_side = Side(mv.side)
                 p1 = (mv.pieces[0].q, mv.pieces[0].r)
                 p2 = (mv.pieces[1].q, mv.pieces[1].r)
