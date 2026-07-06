@@ -31,6 +31,21 @@ class EngineTranslationError(Exception):
     """
 
 
+class SubprocessEngineError(EngineTranslationError):
+    """A subprocess engine failed: the child crashed, closed the pipe, or
+    produced a malformed line.
+
+    Carries captured child stderr (when available) so an opaque Python import
+    failure or ABI mismatch is debuggable instead of silent. Subclasses
+    `EngineTranslationError` so the per-game loop's existing catch
+    (do not submit, do not score as an engine loss) applies unchanged.
+    """
+
+    def __init__(self, message: str, *, stderr: str | None = None) -> None:
+        super().__init__(message if stderr is None else f"{message} (stderr: {stderr})")
+        self.stderr = stderr
+
+
 @runtime_checkable
 class EnginePort(Protocol):
     """Return a move for a game state.
