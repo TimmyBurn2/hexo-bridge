@@ -73,7 +73,7 @@ def _interrupt(rid: int | None = None) -> str:
 
 def _setup() -> str:
     return json.dumps(
-        {"type": "setup", "board": {"to_move": "o", "cells": [{"q": 0, "r": 0, "p": "x"}]}}
+        {"type": "setup", "board": {"cells": [{"q": 0, "r": 0, "p": "x"}]}}
     )
 
 
@@ -249,7 +249,6 @@ def _setup_non_origin() -> str:
         {
             "type": "setup",
             "board": {
-                "to_move": "o",
                 "cells": [{"q": 3, "r": -2, "p": "x"}],
             },
         }

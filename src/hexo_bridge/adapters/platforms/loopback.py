@@ -245,7 +245,6 @@ class LoopbackPlatform:
                 {
                     "type": "setup",
                     "board": {
-                        "to_move": "o",
                         "cells": [
                             {"q": q, "r": r, "p": s} for q, r, s in self._setup_cells
                         ],

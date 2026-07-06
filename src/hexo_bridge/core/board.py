@@ -58,7 +58,10 @@ class GameState:
     moves_to_apply: list[Move] = field(default_factory=list)
     """Moves played since the last engine request (htttx `previous`). Empty if
     this is the engine's first move for this game. Mirrors the htttx move_request
-    `previous` field: ordered, the bot's own prior move first then the client's."""
+    `previous` field: ordered, the bot's own prior move first then the client's.
+    Available for an adapter that wants incremental state; the shipped adapters
+    replay the full `setup_cells` + `moves` instead, so this field is not
+    consumed by in-process, stdio, or htttx-stateless."""
 
     time_limit_seconds: float | None = None
     """Clock-remaining for this move in seconds (the htttx `move_time_limit`),

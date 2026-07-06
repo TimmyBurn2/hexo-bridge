@@ -31,10 +31,13 @@ The base owns:
     sub-second think times this is fine; for a slow engine under many concurrent
     games, run one bridge process per game (one engine instance each) instead.
 
-    Subclass contract: override `build_request(state) -> dict` and
-    `parse_response(obj, state) -> Move`. `parse_response` may return a `Move`
-    of one or two pieces; the bridge normalizes a one-piece move to two before
-    it is sent on the wire.
+    Subclass contract: a subclass either implements `build_request(state) -> dict`
+    and `parse_response(obj, state) -> Move` and lets the base `get_move` drive
+    them, OR overrides `get_move` directly for full control (e.g. the stdio
+    line-protocol adapter, which sends a sequence of ops per call). In the
+    direct-override case `build_request`/`parse_response` are not used. A
+    `parse_response` may return a `Move` of one or two pieces; the bridge
+    normalizes a one-piece move to two before it is sent on the wire.
     """
 
 from __future__ import annotations
