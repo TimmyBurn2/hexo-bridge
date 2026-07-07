@@ -130,8 +130,8 @@ branches on, with tolerate-unknown so additive spec changes do not break it. The
 exact spec commits the models were built against are pinned in `pyproject.toml`
 under `[tool.hexo_bridge.specs]`:
 
-- HeXO Bot API: `github.com/TimmyBurn2/Hexo-Bot-Api`
-- htttx bot API: `github.com/hex-tic-tac-toe/htttx-bot-api`
+- HeXO Bot API: [github.com/TimmyBurn2/Hexo-Bot-Api](https://github.com/TimmyBurn2/Hexo-Bot-Api)
+- htttx bot API: [github.com/hex-tic-tac-toe/htttx-bot-api](https://github.com/hex-tic-tac-toe/htttx-bot-api)
 
 The contract test (`tests/test_spec_contract.py`) fetches each spec at its
 pinned commit, parses every spec example against the matching hand-written
@@ -144,3 +144,9 @@ match.
 
 `OPEN-QUESTIONS.md` tracks what is still unresolved. The package name
 (`hexo_bridge` / `hexo-bridge`) is the user's to finalize.
+
+## License
+
+[MIT](./LICENSE). The bridge pins the two specs it tracks (HeXO Bot API and
+htttx bot API) by commit in `pyproject.toml`; each spec repo carries its own
+license.
