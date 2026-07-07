@@ -54,7 +54,7 @@ dev = [
 # of truth read by the contract test (tests/test_spec_contract.py) and referenced
 # by the README. Bump together with a model update; the contract test enforces
 # the match. Pins track each spec's `main` branch tip.
-hexo = "3ed2c4595d55e2ba59895e9b164a3867363e71f7"   # github.com/TimmyBurn2/Hexo-Bot-Api (main)
+hexo = "b56c667ea2e8dde87416d941cfa0f817cde18ecb"   # github.com/TimmyBurn2/Hexo-Bot-Api (main)
 htttx = "37d2385f1016abe8b25798238a7d0c4a17a25dda"  # github.com/hex-tic-tac-toe/htttx-bot-api (main)
 
 [tool.ruff]
