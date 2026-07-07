@@ -40,15 +40,24 @@ _ROUNDTRIP = ConfigDict(extra="allow")
 
 
 class Side(RootModel[Literal["p1", "p2"]]):
-    """Which side a player is on, by play order. `p1` opens, `p2` replies."""
+    """Which side a player is on, by play order. `p1` moves first in the turn
+    sequence, `p2` second. Identity label only: the opening may be server-auto-played
+    (engine-protocol detail), so a `p1` bot's first move_request is not necessarily
+    its first turn."""
 
     root: Literal["p1", "p2"]
 
 
-class Variant(RootModel[Literal["httt6"]]):
-    """The HeXO game variant key. Currently only `httt6`."""
+class Variant(RootModel[str]):
+    """The variant key for a game, scoped to the serving host's registry.
 
-    root: Literal["httt6"]
+    An open string: the contract carries the field, not the value set, so the
+    bridge accepts whatever key the server advertises (the reference host serves
+    `httt6`). The bridge does not branch on the variant value; whether the
+    engine session can actually play a given variant is a runtime concern for
+    the engine session adapter, not a model-validation concern here."""
+
+    root: str
 
 
 class DeclineReason(
