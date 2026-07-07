@@ -273,8 +273,8 @@ def _run_contract() -> None:
     # 3. Discriminator enums match.
     side_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/Side.yaml")
     decline_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/DeclineReason.yaml")
+    finish_reason_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/FinishReason.yaml")
     tc_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/TimeControl.yaml")
-    gei_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/GameEventInfo.yaml")
     event_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/Event.yaml")
 
     assert_enum_matches("Side", _yaml_enum(side_yaml), _field_literal(Side, "root"))
@@ -290,9 +290,11 @@ def _run_contract() -> None:
         _hexo_timecontrol_modes(tc_yaml),
         _discriminator_values(TimeControl, "root", "mode"),
     )
+    # `finishReason` lives on its own `FinishReason` schema (single source of
+    # truth), `$ref`'d from `GameEventInfo` and the bulk-pairing results read.
     assert_enum_matches(
-        "GameEventInfo.finishReason",
-        _yaml_enum(gei_yaml, "properties", "finishReason"),
+        "FinishReason",
+        _yaml_enum(finish_reason_yaml),
         _field_literal(GameEventInfo, "finishReason"),
     )
     assert_enum_matches(
