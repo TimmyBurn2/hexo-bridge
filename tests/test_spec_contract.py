@@ -8,7 +8,9 @@ Replaces the deleted codegen drift gate. For each spec at the commit pinned in
     model, failing on any that does not parse,
   - asserts the discriminator enums/consts the bridge branches on match between
     spec and code (`Event.type`, `GameEventInfo.finishReason`, `TimeControl.mode`,
-    `DeclineReason`, `Side`, `Variant`, and the htttx packet `type` consts).
+    `DeclineReason`, `Side`, and the htttx packet `type` consts). `Variant` is
+    intentionally excluded: it is an open server-scoped string in both spec and
+    code, so there is no enum to assert.
 
 CI-only and skippable offline: it is skipped unless `RUN_CONTRACT_TESTS=1` is
 set, so `pytest` stays green without network. Unit tests use checked-in fixtures
@@ -270,14 +272,16 @@ def _run_contract() -> None:
 
     # 3. Discriminator enums match.
     side_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/Side.yaml")
-    variant_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/Variant.yaml")
     decline_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/DeclineReason.yaml")
     tc_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/TimeControl.yaml")
     gei_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/GameEventInfo.yaml")
     event_yaml = _fetch_yaml(pins, HEXO_REPO, f"{schemas_dir}/Event.yaml")
 
     assert_enum_matches("Side", _yaml_enum(side_yaml), _field_literal(Side, "root"))
-    assert_enum_matches("Variant", _yaml_enum(variant_yaml), _field_literal(Variant, "root"))
+    # `Variant` is an open server-scoped string in both spec (no `enum`) and code
+    # (`RootModel[str]`), so there is nothing to assert; its example still parses
+    # above. A future spec that re-introduces a closed `Variant` enum would need
+    # an assertion re-added here to guard the bridge's branching.
     assert_enum_matches(
         "DeclineReason", _yaml_enum(decline_yaml), _field_literal(DeclineReason, "root")
     )
