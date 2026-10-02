@@ -1,14 +1,29 @@
-"""hexo_bridge: reference adapter between a HeXO bot server and a bot engine.
+"""hexo_bridge: run a HeXO bot around your engine, on any server that speaks the HeXO Bot API."""
 
-Ports and adapters. Core is pure and does no I/O. The engine port returns a move
-for a game state; the engine session port is the per-game gameplay channel; the
-platform port is the HeXO lifecycle surface. Adapters are resolved by name via
-entry points with a dotted-path fallback.
-"""
+from hexo_bridge.answers import Evaluation, Line, Resign
+from hexo_bridge.bot import Bot, run
+from hexo_bridge.client import ApiError, Client
+from hexo_bridge.engine import AnalysisRequest, Engine, Game, Level, MoveRequest, StdioEngine
+from hexo_bridge.position import Cell, Position, Side, Turn
 
-from hexo_bridge.core.board import Board, GameState
-from hexo_bridge.core.move import Coord, Move, Side
+__all__ = [
+    "AnalysisRequest",
+    "ApiError",
+    "Bot",
+    "Cell",
+    "Client",
+    "Engine",
+    "Evaluation",
+    "Game",
+    "Level",
+    "Line",
+    "MoveRequest",
+    "Position",
+    "Resign",
+    "Side",
+    "StdioEngine",
+    "Turn",
+    "run",
+]
 
-__all__ = ["Board", "Coord", "GameState", "Move", "Side"]
-
-__version__ = "0.1.0"
+__version__ = "0.2.0"

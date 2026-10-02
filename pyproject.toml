@@ -1,73 +1,28 @@
 [project]
 name = "hexo-bridge"
-version = "0.1.0"
-description = "Reference adapter bridging a HeXO bot server to a bot engine over the htttx engine protocol."
+version = "0.2.0"
+description = "Run a HeXO bot: the Bot API's stream, games, levels, and analysis around your engine."
 readme = "README.md"
-authors = [
-    { name = "TimmyBurn", email = "103030205+TimmyBurn2@users.noreply.github.com" }
-]
-requires-python = ">=3.13"
-dependencies = [
-    "httpx>=0.28",
-    "pydantic>=2.10",
-    "websockets>=15",
-    "tomli>=2; python_version < '3.11'",
-]
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = ["websockets>=13"]
 
 [project.scripts]
 hexo-bridge = "hexo_bridge.cli:main"
 
-[project.entry-points."hexo_bridge.engines"]
-htttx_stateless = "hexo_bridge.adapters.engines.htttx_stateless:HtttxStatelessEngine"
-in_process_first_move = "hexo_bridge.adapters.engines.in_process:InProcessFirstMoveEngine"
-# Generic stdio line-protocol adapter: the clean path for an existing engine.
-# See docs/write-your-own-adapter.md and src/hexo_bridge/adapters/engines/stdio.py.
-stdio = "hexo_bridge.adapters.engines.stdio:StdioLineEngine"
-# Worked third-party example adapter (see src/hexo_bridge_examples/).
-my_custom_engine = "hexo_bridge_examples.custom_engine:FirstLegalMoveEngine"
-
-[project.entry-points."hexo_bridge.engine_sessions"]
-htttx_websocket = "hexo_bridge.adapters.engine_sessions.htttx_websocket:HtttxWebsocketSession"
-
-[project.entry-points."hexo_bridge.platforms"]
-hexo = "hexo_bridge.adapters.platforms.hexo:HeXOPlatform"
-# Offline test harness, not a server. See adapters/platforms/loopback.py.
-loopback = "hexo_bridge.adapters.platforms.loopback:LoopbackPlatform"
-
 [build-system]
-requires = ["uv_build>=0.9.22,<0.10.0"]
+requires = ["uv_build>=0.9.22,<0.12"]
 build-backend = "uv_build"
 
-[tool.uv]
-package = true
-
 [dependency-groups]
-dev = [
-    "ruff>=0.15",
-    "pytest>=8",
-    "pytest-asyncio>=0.25",
-    "pyyaml>=6",
-]
-
-[tool.hexo_bridge.specs]
-# Pinned spec commits the hand-written models were built against. Single source
-# of truth read by the contract test (tests/test_spec_contract.py) and referenced
-# by the README. Bump together with a model update; the contract test enforces
-# the match. Pins track each spec's `main` branch tip.
-hexo = "b56c667ea2e8dde87416d941cfa0f817cde18ecb"   # github.com/TimmyBurn2/Hexo-Bot-Api (main)
-htttx = "37d2385f1016abe8b25798238a7d0c4a17a25dda"  # github.com/hex-tic-tac-toe/htttx-bot-api (main)
+dev = ["pytest>=8", "ruff>=0.15"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py313"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
-ignore = ["E501", "SIM105", "UP042", "E741"]
 
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
-markers = [
-    "contract: spec contract test that fetches the pinned specs over network (skipped unless RUN_CONTRACT_TESTS=1)",
-]

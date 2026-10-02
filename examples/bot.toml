@@ -1,0 +1,33 @@
+# Run with: HEXO_BOT_TOKEN=hxo_... hexo-bridge examples/bot.toml
+
+[server]
+url = "https://<domain>"          # the server's origin; the Bot API is under /api on it
+# token_env = "HEXO_BOT_TOKEN"   # the environment variable holding the bot token
+# open = true                     # take challenges, and games started from the website
+
+[engine]
+command = ["python3", "random_engine.py"]   # started in this file's directory
+# cwd = "."                       # another directory, relative to this file
+# reserve_seconds = 1.0           # kept back from each move's clock for the network
+
+# The bot's declaration, sent to PATCH /api/bot/account as written.
+[declaration]
+about = "Plays random cells beside the stones."
+version = "0.1.0"
+accepts = { turnMs = [5000, 300000], match = true, unlimited = true }
+
+[declaration.analyzer]
+lines = 1
+maxSeconds = 2
+
+# Levels a player may pick, weakest first; each request names the game's level.
+# [declaration.levels]
+# default = "normal"
+# [[declaration.levels.list]]
+# id = "quick"
+# label = "quick"
+# budget = { timeMs = 200 }
+# [[declaration.levels.list]]
+# id = "normal"
+# label = "normal"
+# budget = { timeMs = 1000 }
