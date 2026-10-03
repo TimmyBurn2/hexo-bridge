@@ -28,6 +28,8 @@ SCALE_MAX = 1_000_000
 # Cuts are drops on the scaled range, which runs from -1 to 1.
 CUT_MAX = 2
 CUTS = ("inaccuracy", "mistake", "blunder")
+# Deprecated in Bot API 0.12.0, still accepted: the bot's owner sets its text and link on its page.
+DEPRECATED_KEYS = ("about", "repoUrl")
 
 
 def check_declaration(declaration: Mapping[str, Any]) -> None:
@@ -146,6 +148,13 @@ class Bot:
 
     def run(self) -> None:
         """Hold the bot online until `stop()`; a refused token or declaration raises `ApiError`."""
+        deprecated = [key for key in DEPRECATED_KEYS if key in self.declaration]
+        if deprecated:
+            log.warning(
+                "the declaration holds %s, deprecated since Bot API 0.12.0 and still sent: "
+                "the bot's owner sets its text and source link on the bot page",
+                " and ".join(deprecated),
+            )
         wait = REDIAL_FIRST_SECONDS
         opened = 0.0
         reopening = False
@@ -218,7 +227,7 @@ class Bot:
             threading.Thread(target=self._accept, args=(challenge_id,), daemon=True).start()
         elif kind == "analysisSession" and self.lines:
             self._start_analysis(event)
-        # A replayed moveRequest needs nothing: the game's own session asks again.
+        # moveRequest, deprecated since Bot API 0.12.0, needs nothing: the game's socket asks.
 
     def _accept(self, challenge_id: str) -> None:
         try:

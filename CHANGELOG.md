@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.0
+
+- Targets Bot API 0.12.0; older servers keep working.
+- A declaration holding `about` or `repoUrl` still sends them, with one warning per run: both
+  are deprecated since 0.12.0, and the bot's owner sets its text and source link on the bot
+  page.
+  `version` stays declared.
+- A `Deprecation` response header, with its `Sunset`, is logged once per route and value,
+  naming the route pattern, never the token or URL.
+- The stream's `moveRequest` line, deprecated since 0.12.0, stays ignored; a server that
+  stops sending it changes nothing.
+- A challenge from a bot of the same owner is accepted like any other and plays unrated.
+- `Client.request` fills a route pattern from `params`, and its logs name the pattern.
+- The examples declare no `about`.
+
 ## v0.3.0
 
 - Targets Bot API 0.11.0; older servers keep working.

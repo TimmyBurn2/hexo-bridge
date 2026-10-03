@@ -23,7 +23,7 @@ RETRY_CAP_SECONDS = 30
 # The stream sends a bare newline every 10 s, so a read this long means the connection is gone.
 STREAM_READ_SECONDS = 30
 # Declaration keys an older server refuses, newest first, each as its path in the declaration:
-# analyzer.values came in 0.11.0, analyzer in 0.10.0, levels in 0.9.0.
+# analyzer.values came in 0.11.0, analyzer in 0.10.0, levels in 0.9.0; 0.12.0 added none.
 NEWER_KEYS = (("analyzer", "values"), ("analyzer",), ("levels",))
 
 try:
@@ -33,6 +33,10 @@ except metadata.PackageNotFoundError:
     VERSION = "unknown"
 # Sent with every request and handshake, so a server can count the bridge versions it serves.
 USER_AGENT = f"hexo-bridge/{VERSION}"
+
+# Deprecation notices logged so far, by route and header values: each is logged once.
+_noted: set[tuple[str, str, str | None]] = set()
+_noted_lock = threading.Lock()
 
 
 class ApiError(Exception):
@@ -56,12 +60,22 @@ class Client:
         self.timeout = timeout
 
     def request(
-        self, method: str, path: str, body: Any = None, token: str | None = None, tries: int = TRIES
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        token: str | None = None,
+        tries: int = TRIES,
+        params: Mapping[str, str] | None = None,
     ) -> Any:
-        """One call, retrying a 429 or 503 after the short wait it names."""
+        """One call, retrying a 429 or 503 after the short wait it names.
+
+        `path` may be a route pattern, each `{name}` in it filled from `params`; logs name the
+        pattern, never the path it fills.
+        """
         for attempt in range(tries):
             try:
-                with self._open(method, path, body, token, self.timeout) as response:
+                with self._open(method, path, body, token, self.timeout, params) as response:
                     text = response.read().decode()
                     return json.loads(text) if text else None
             except ApiError as error:
@@ -112,18 +126,27 @@ class Client:
 
     def accept(self, challenge_id: str) -> None:
         # One try: a challenge lives 60 s, and a refusal now is the answer.
-        self.request("POST", f"/api/bot/challenge/{quote(challenge_id)}/accept", tries=1)
+        self.request(
+            "POST",
+            "/api/bot/challenge/{challengeId}/accept",
+            tries=1,
+            params={"challengeId": challenge_id},
+        )
 
     def decline(self, challenge_id: str) -> None:
-        self.request("POST", f"/api/bot/challenge/{quote(challenge_id)}/decline")
+        self.request(
+            "POST", "/api/bot/challenge/{challengeId}/decline", params={"challengeId": challenge_id}
+        )
 
     def challenge(self, name: str, body: Mapping[str, Any]) -> dict[str, Any]:
         """Challenge another bot; `body` holds `timeControl` and a fresh `requestId`, and may hold
         `openingPlies` and `firstPlayer`."""
-        return self.request("POST", f"/api/bot/challenge/{quote(name)}", dict(body))
+        return self.request("POST", "/api/bot/challenge/{name}", dict(body), params={"name": name})
 
     def resign(self, game_id: str, game_token: str) -> None:
-        self.request("POST", f"/api/bot/game/{quote(game_id)}/resign", token=game_token)
+        self.request(
+            "POST", "/api/bot/game/{gameId}/resign", token=game_token, params={"gameId": game_id}
+        )
 
     def socket_url(self, socket_url: str, token: str) -> str:
         """A session's websocket address: its path on the API's origin, with its token."""
@@ -131,7 +154,18 @@ class Client:
         url = url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
         return f"{url}{'&' if '?' in url else '?'}{urlencode({'token': token})}"
 
-    def _open(self, method: str, path: str, body: Any, token: str | None, timeout: float) -> Any:
+    def _open(
+        self,
+        method: str,
+        path: str,
+        body: Any,
+        token: str | None,
+        timeout: float,
+        params: Mapping[str, str] | None = None,
+    ) -> Any:
+        route = f"{method} {path.split('?')[0]}"
+        if params:
+            path = path.format_map({name: quote(value) for name, value in params.items()})
         data = None if body is None else json.dumps(body).encode()
         request = urllib.request.Request(
             urljoin(self.url, path.lstrip("/")), data=data, method=method
@@ -142,9 +176,33 @@ class Client:
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:
-            return urllib.request.urlopen(request, timeout=timeout)
+            response = urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as error:
+            note_deprecation(route, error.headers)
             raise _api_error(error) from None
+        note_deprecation(route, response.headers)
+        return response
+
+
+def note_deprecation(route: str, headers: Mapping[str, str] | None) -> None:
+    """Log a `Deprecation` response header, with its `Sunset`, once per route and value.
+
+    `route` is the method and path pattern, so no token, id, or origin reaches the log.
+    """
+    deprecation = headers.get("Deprecation") if headers is not None else None
+    if deprecation is None:
+        return
+    sunset = headers.get("Sunset")
+    with _noted_lock:
+        if (route, deprecation, sunset) in _noted:
+            return
+        _noted.add((route, deprecation, sunset))
+    log.warning(
+        "the server marks %s deprecated: Deprecation %s%s",
+        route,
+        deprecation,
+        f", Sunset {sunset}" if sunset else "",
+    )
 
 
 def _holds(body: Mapping[str, Any], path: tuple[str, ...]) -> bool:

@@ -15,7 +15,7 @@ from websockets.exceptions import InvalidStatus, WebSocketException
 from websockets.sync.client import ClientConnection, connect
 
 from hexo_bridge.answers import Evaluation, Line, Resign, as_lines, settle
-from hexo_bridge.client import USER_AGENT, ApiError, Client
+from hexo_bridge.client import USER_AGENT, ApiError, Client, note_deprecation
 from hexo_bridge.engine import AnalysisRequest, Engine, Game, MoveRequest
 from hexo_bridge.position import Cell, Position, Side
 
@@ -36,6 +36,20 @@ ANALYSIS_GRACE_SECONDS = 1.5
 TOKEN_SECONDS = 55
 # Long enough for a reopened stream, held to one open in 10 s, to replay the game.
 FRESH_TOKEN_SECONDS = 30
+GAME_ROUTE = "GET /api/bot/game/{gameId}/socket"
+ANALYSIS_ROUTE = "GET /api/bot/analysis/socket"
+
+
+def dial(url: str, route: str) -> ClientConnection:
+    """Open a session's websocket, logging a deprecation its handshake answers by `route`,
+    since the URL holds the token."""
+    try:
+        socket = connect(url, open_timeout=10, user_agent_header=USER_AGENT)
+    except InvalidStatus as error:
+        note_deprecation(route, error.response.headers)
+        raise
+    note_deprecation(route, socket.response.headers)
+    return socket
 
 
 def start(call: Callable[..., Any], *args: Any) -> concurrent.futures.Future[Any]:
@@ -141,7 +155,7 @@ class GameSession(threading.Thread):
     def _play(self) -> bool:
         """One connection; True when it should be dialed again."""
         try:
-            with connect(self.url, open_timeout=10, user_agent_header=USER_AGENT) as socket:
+            with dial(self.url, GAME_ROUTE) as socket:
                 self.socket = socket
                 self.wait = REDIAL_FIRST_SECONDS
                 stones: dict[Cell, Side] = {}
@@ -323,7 +337,7 @@ class AnalysisSession(threading.Thread):
     def _serve(self) -> str:
         """One connection: `served` once it opened, else `retry`, `refused`, or `gone`."""
         try:
-            with connect(self.url, open_timeout=10, user_agent_header=USER_AGENT) as socket:
+            with dial(self.url, ANALYSIS_ROUTE) as socket:
                 self.socket = socket
                 if self.previous is not None:
                     self.previous.close()

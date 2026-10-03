@@ -11,9 +11,9 @@ command = ["python3", "random_engine.py"]   # started in this file's directory
 # reserve_seconds = 1.0           # kept back from each move's clock for the network
 
 # The bot's declaration, sent to PATCH /api/bot/account as written.
+# Its text and source link are its owner's to set on the bot page.
 [declaration]
-about = "Plays random cells beside the stones."
-version = "0.1.0"
+version = "0.1.0"                 # the build that answers
 accepts = { turnMs = [5000, 300000], match = true, unlimited = true }
 
 [declaration.analyzer]

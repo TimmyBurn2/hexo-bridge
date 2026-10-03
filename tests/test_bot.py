@@ -9,10 +9,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
+from websockets.exceptions import InvalidStatus
 from websockets.sync.server import serve
 
 from hexo_bridge import Bot, Engine, Evaluation, Game, Level, Line, bot, sessions
-from hexo_bridge.client import Client
+from hexo_bridge.client import ApiError, Client
 from hexo_bridge.position import Position
 from hexo_bridge.sessions import AnalysisSession, GameSession
 
@@ -20,7 +21,7 @@ ACCEPTS = {"turnMs": [5000, 300000], "match": True, "unlimited": True}
 DECLARATION = {"accepts": ACCEPTS, "analyzer": {"lines": 1, "maxSeconds": 2}}
 CUTS = {"inaccuracy": 0.1, "mistake": 0.2, "blunder": 0.3}
 VALUES = {"scale": 1, "meaning": "expected", "cuts": CUTS}
-# Hexo-Bot-Api's examples/stream.ndjson at tag v0.11.0, verbatim.
+# Hexo-Bot-Api's examples/stream.ndjson at tag v0.12.0, verbatim.
 FIXTURE = Path(__file__).parent / "fixtures" / "stream.ndjson"
 PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
 GAME = Game("g_1", "o", "rival", False, Level(None), {"mode": "turn", "turnTimeMs": 5000}, 1)
@@ -48,6 +49,8 @@ class FakeServer:
         self.declarations = []
         # A server older than a declaration key refuses a body that holds it.
         self.refuses = lambda body: False
+        # Headers on every HTTP answer, as a server that deprecates a route sends them.
+        self.headers = {}
         self.agents = []
         self.accepted = []
         self.game_answers = []
@@ -133,6 +136,8 @@ class FakeServer:
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                for name, value in server.headers.items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(data)
 
@@ -312,14 +317,24 @@ def test_a_reading_past_its_limit_is_answered_from_the_rules(monkeypatch):
     assert answer["move"]["evaluation"] == {"heuristic": 0.0}
 
 
-def test_every_event_in_the_spec_example_is_handled(monkeypatch):
+def spec_events():
+    return [json.loads(line) for line in FIXTURE.read_text().splitlines() if line.strip()]
+
+
+@pytest.mark.parametrize("move_requests", [True, False], ids=["sent", "no longer sent"])
+def test_every_event_in_the_spec_example_is_handled_whether_or_not_move_requests_come(
+    monkeypatch, move_requests
+):
     started = []
     accepted = []
     monkeypatch.setattr(GameSession, "start", lambda self: started.append(self))
     monkeypatch.setattr(AnalysisSession, "start", lambda self: started.append(self))
     monkeypatch.setattr(Client, "accept", lambda self, challenge_id: accepted.append(challenge_id))
     runner = Bot(SlowReader, url="http://127.0.0.1:9", token="hxo_test", declaration=DECLARATION)
-    events = [json.loads(line) for line in FIXTURE.read_text().splitlines() if line.strip()]
+    events = spec_events()
+    assert any(event["type"] == "moveRequest" for event in events)
+    if not move_requests:
+        events = [event for event in events if event["type"] != "moveRequest"]
     for event in events:
         runner.handle(event)
     deadline = time.monotonic() + 2
@@ -416,3 +431,128 @@ def test_an_older_server_gets_the_declaration_without_the_keys_it_predates_newes
 
     # The caller's declaration is left whole, so the next stream open sends it all again.
     assert analyzer["values"] == VALUES
+
+
+def test_a_challenge_from_a_bot_of_the_same_owner_is_accepted_and_played_unrated(monkeypatch):
+    started = []
+    accepted = []
+    monkeypatch.setattr(GameSession, "start", lambda self: started.append(self))
+    monkeypatch.setattr(Client, "accept", lambda self, challenge_id: accepted.append(challenge_id))
+    runner = Bot(SlowReader, url="http://127.0.0.1:9", token="hxo_test", declaration=DECLARATION)
+    events = spec_events()
+    challenge = next(event for event in events if event["type"] == "challenge")
+    sibling = {**challenge["challenge"]["destUser"], "name": "alice-bot-2"}
+    runner.handle({**challenge, "challenge": {**challenge["challenge"], "challenger": sibling}})
+    deadline = time.monotonic() + 2
+    while not accepted and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert accepted == [challenge["challenge"]["challengeId"]]
+
+    start = next(event for event in events if event["type"] == "gameStart")
+    runner.handle({**start, "opponent": sibling, "rated": False})
+    (session,) = started
+    assert (session.game.opponent, session.game.rated) == ("alice-bot-2", False)
+    answer = session._answer(
+        START, {"type": "move_request", "side": "o", "move_time_limit": 5, "request_id": 0}
+    )
+    assert answer["request_id"] == 0 and START.is_legal(cells(answer["move"]["pieces"]))
+
+
+def test_a_declared_about_or_repo_url_is_still_sent_with_one_warning_per_run(
+    server, monkeypatch, caplog
+):
+    declaration = {**DECLARATION, "about": "Plays beside the stones.", "repoUrl": ""}
+    runner = Bot(SlowReader, url=server.url, token="hxo_test", declaration=declaration)
+    opens = []
+
+    def stream(self, open_for_challenges=True, stop=None):
+        opens.append(open_for_challenges)
+        if len(opens) == 2:
+            runner.stop()
+        return iter(())
+
+    monkeypatch.setattr(Client, "stream", stream)
+    monkeypatch.setattr(bot, "REDIAL_FIRST_SECONDS", 0.01)
+    runner.run()
+
+    assert [body for _, body in server.declarations] == [{"levels": None, **declaration}] * 2
+    warnings = [record.getMessage() for record in caplog.records if "0.12.0" in record.getMessage()]
+    assert len(warnings) == 1 and "about and repoUrl" in warnings[0]
+    assert "bot page" in warnings[0]
+
+
+def notes(caplog):
+    return [
+        record.getMessage() for record in caplog.records if " deprecated: " in record.getMessage()
+    ]
+
+
+def test_a_deprecation_header_is_logged_once_per_route_and_value_by_its_pattern(
+    server, monkeypatch, caplog
+):
+    monkeypatch.setattr("hexo_bridge.client._noted", set())
+    server.headers = {"Deprecation": "@1798761600", "Sunset": "Fri, 01 Jan 2027 00:00:00 GMT"}
+    client = Client(server.url, "hxo_secret")
+    client.accept("c_secret1")
+    client.accept("c_secret2")
+    client.resign("g_secret", "hgs_secret")
+    server.headers = {"Deprecation": "@1801440000"}
+    client.accept("c_secret3")
+    server.refuses = lambda body: True
+    with pytest.raises(ApiError):
+        client.declare({"accepts": ACCEPTS})
+
+    sunset = ", Sunset Fri, 01 Jan 2027 00:00:00 GMT"
+    assert notes(caplog) == [
+        f"the server marks POST /api/bot/challenge/{{challengeId}}/accept deprecated: "
+        f"Deprecation @1798761600{sunset}",
+        f"the server marks POST /api/bot/game/{{gameId}}/resign deprecated: "
+        f"Deprecation @1798761600{sunset}",
+        "the server marks POST /api/bot/challenge/{challengeId}/accept deprecated: "
+        "Deprecation @1801440000",
+        "the server marks PATCH /api/bot/account deprecated: Deprecation @1801440000",
+    ]
+    assert server.accepted[:2] == [
+        "/api/bot/challenge/c_secret1/accept",
+        "/api/bot/challenge/c_secret2/accept",
+    ]
+    assert not any(
+        "secret" in record.getMessage() or "127.0.0.1" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_a_deprecation_on_a_session_handshake_is_logged_by_its_route_without_the_token(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr("hexo_bridge.client._noted", set())
+
+    def refuse(connection, request):
+        if request.path.endswith("has_gone"):
+            return connection.respond(401, "the token expired\n")
+        return None
+
+    def mark(connection, request, response):
+        response.headers["Deprecation"] = "@1798761600"
+
+    with serve(
+        lambda ws: None, "127.0.0.1", 0, process_request=refuse, process_response=mark
+    ) as ws:
+        threading.Thread(target=ws.serve_forever, daemon=True).start()
+        origin = f"ws://127.0.0.1:{ws.socket.getsockname()[1]}"
+        for _ in range(2):
+            with sessions.dial(
+                f"{origin}/api/bot/game/g_1/socket?token=hgs_secret", sessions.GAME_ROUTE
+            ):
+                pass
+        with pytest.raises(InvalidStatus):
+            sessions.dial(
+                f"{origin}/api/bot/analysis/socket?token=has_gone", sessions.ANALYSIS_ROUTE
+            )
+        ws.shutdown()
+
+    assert notes(caplog) == [
+        "the server marks GET /api/bot/game/{gameId}/socket deprecated: Deprecation @1798761600",
+        "the server marks GET /api/bot/analysis/socket deprecated: Deprecation @1798761600",
+    ]
+    assert not any("hgs_secret" in record.getMessage() for record in caplog.records)

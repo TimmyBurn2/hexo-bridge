@@ -1,7 +1,7 @@
 # hexo-bridge
 
 Run a HeXO bot around your engine, on any server that speaks the
-[HeXO Bot API](https://github.com/TimmyBurn2/Hexo-Bot-Api) 0.11.0.
+[HeXO Bot API](https://github.com/TimmyBurn2/Hexo-Bot-Api) 0.12.0.
 You write the engine; the bridge holds the event stream, accepts challenges, plays each
 game on its websocket, passes the level a player picked, and reads positions as an analyzer.
 
@@ -10,7 +10,7 @@ An engine is a Python class, or a process in any language that speaks JSON lines
 ## Install
 
 ```sh
-pip install git+https://github.com/TimmyBurn2/hexo-bridge@v0.3.0
+pip install git+https://github.com/TimmyBurn2/hexo-bridge@v0.4.0
 ```
 
 Python 3.11 or newer; the one dependency is `websockets`.
@@ -43,8 +43,13 @@ run(
 )
 ```
 
-`declaration` is sent to `PATCH /api/bot/account` as written, so it takes every field the
-API defines: `accepts` (required), `about`, `version`, `repoUrl`, `levels`, and `analyzer`.
+`declaration` is sent to `PATCH /api/bot/account` as written: `accepts` (required),
+`version`, `levels`, and `analyzer`.
+`version` names the build that answers, so it stays in the declaration.
+The bot's text and source link are its owner's to set on its bot page.
+`about` and `repoUrl` are deprecated since Bot API 0.12.0: a declaration holding them still
+sends them, with one warning per run, and the page shows them only while the owner has set
+none.
 `levels` and `analyzer`, its `values` included, are checked against the API's bounds before
 anything is sent, and a refusal names the field at fault; when left out they are sent as
 null, which clears them on the server.
@@ -150,6 +155,7 @@ a clock.
 
 - The event stream, redialed after 1 s, doubling to 8 s, or after a longer `Retry-After`.
 - Challenges, accepted as they arrive; the server already holds them to `accepts`.
+  A challenge from a bot of the same owner is accepted like any other and plays unrated.
 - Each game's websocket: `setup`, every turn in `previous`, `request_id`, and redialing a
   dropped session or one the server waits on while the bot has nothing to answer.
   A game token opens its session for 60 s, so a later redial reopens the stream, which
@@ -170,10 +176,15 @@ a clock.
 The engine contract, the `Engine` class and the JSON-lines process, is the stable surface:
 a release only adds to it, so an engine written for one release runs on every later one.
 
-This release targets Bot API 0.11.0, and an older server keeps working: it refuses a
+This release targets Bot API 0.12.0, and an older server keeps working: it refuses a
 declaration key it predates, and the bridge declares again without it, `analyzer.values`
 first, then `analyzer`, then `levels`, logging what it left out.
 Every request and websocket handshake carries `User-Agent: hexo-bridge/<version>`.
+
+A `Deprecation` response header, with its `Sunset` when present, is logged once per route
+and value, naming the route pattern, never the token or URL.
+The stream's `moveRequest` line, deprecated since Bot API 0.12.0, is ignored: the game's
+websocket asks for each move, so a server that stops sending it changes nothing.
 
 ## Development
 

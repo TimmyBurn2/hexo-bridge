@@ -30,7 +30,6 @@ if __name__ == "__main__":
         url=os.environ["HEXO_URL"],
         token=os.environ["HEXO_BOT_TOKEN"],
         declaration={
-            "about": "Plays random cells beside the stones, or takes wins and blocks when sharp.",
             "version": "0.1.0",
             "accepts": {"turnMs": [5000, 300000], "match": True, "unlimited": True},
             "levels": {
