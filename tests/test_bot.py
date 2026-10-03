@@ -2,6 +2,7 @@ import contextlib
 import json
 import threading
 import time
+import tomllib
 import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -17,6 +18,7 @@ from hexo_bridge.sessions import AnalysisSession, GameSession
 ACCEPTS = {"turnMs": [5000, 300000], "match": True, "unlimited": True}
 DECLARATION = {"accepts": ACCEPTS, "analyzer": {"lines": 1, "maxSeconds": 2}}
 FIXTURE = Path(__file__).parent / "fixtures" / "stream.ndjson"
+PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
 GAME = Game("g_1", "o", "rival", False, Level(None), {"mode": "turn", "turnTimeMs": 5000}, 1)
 START = Position({(0, 0): "x"}, "o")
 
@@ -40,6 +42,7 @@ class FakeServer:
 
     def __init__(self):
         self.declarations = []
+        self.agents = []
         self.accepted = []
         self.game_answers = []
         self.readings = []
@@ -93,15 +96,18 @@ class FakeServer:
                 pass
 
             def do_PATCH(self):
+                server.agents.append(("PATCH", self.headers["User-Agent"]))
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 server.declarations.append((self.headers["Authorization"], body))
                 self.reply(body)
 
             def do_POST(self):
+                server.agents.append(("POST", self.headers["User-Agent"]))
                 server.accepted.append(self.path)
                 self.reply({"ok": True})
 
             def do_GET(self):
+                server.agents.append(("GET", self.headers["User-Agent"]))
                 server.streams += 1
                 self.send_response(200)
                 self.send_header("Content-Type", "application/x-ndjson")
@@ -124,6 +130,8 @@ class FakeServer:
         return Handler
 
     def check_token(self, connection, request):
+        kind = "game" if request.path.startswith("/game") else "analysis"
+        self.agents.append((kind, request.headers.get("User-Agent")))
         if request.path.split("token=")[-1] in self.expired:
             return connection.respond(404, "the token expired\n")
         return None
@@ -195,12 +203,23 @@ class FakeServer:
         self.analysis_done.set()
 
 
-@pytest.fixture
-def server(monkeypatch):
-    monkeypatch.setattr(bot, "REOPEN_SECONDS", 0.5)
-    server = FakeServer()
-    yield server
-    server.close()
+@pytest.fixture(scope="module")
+def played():
+    """The fake server after a bot played its game and answered its readings, then stopped."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(bot, "REOPEN_SECONDS", 0.5)
+        server = FakeServer()
+        runner = Bot(SlowReader, url=server.url, token="hxo_test", declaration=DECLARATION)
+        thread = threading.Thread(target=runner.run, daemon=True)
+        thread.start()
+        assert server.game_done.wait(15)
+        assert server.analysis_done.wait(10)
+        runner.stop()
+        server.finished.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        yield server
+        server.close()
 
 
 def cells(pieces):
@@ -208,18 +227,9 @@ def cells(pieces):
 
 
 def test_a_bot_plays_on_through_an_expired_token_and_answers_only_the_reading_not_called_off(
-    server,
+    played,
 ):
-    runner = Bot(SlowReader, url=server.url, token="hxo_test", declaration=DECLARATION)
-    thread = threading.Thread(target=runner.run, daemon=True)
-    thread.start()
-    assert server.game_done.wait(15)
-    assert server.analysis_done.wait(10)
-    runner.stop()
-    server.finished.set()
-    thread.join(5)
-    assert not thread.is_alive()
-
+    server = played
     # Absent keys go as null, since the server keeps whatever a declaration leaves out.
     assert server.declarations[0] == ("Bearer hxo_test", {"levels": None, **DECLARATION})
     assert server.accepted == ["/api/bot/challenge/c_1/accept"]
@@ -326,3 +336,9 @@ def test_a_declaration_the_server_would_refuse_is_refused_before_it_is_sent():
 
     with pytest.raises(TypeError):
         Bot(MoveOnly, url="http://127.0.0.1:9", token="hxo_test", declaration=DECLARATION)
+
+
+def test_every_request_and_handshake_names_the_bridge_and_its_version(played):
+    version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
+    assert {kind for kind, _ in played.agents} == {"PATCH", "GET", "POST", "game", "analysis"}
+    assert {agent for _, agent in played.agents} == {f"hexo-bridge/{version}"}

@@ -144,6 +144,10 @@ a clock.
   and an engine still searching past that plays `fallback_turn()` rather than lose on time.
   Engines are started off the clock, and a reading's time runs from the server's request.
 
+## Versions
+
+Every request and websocket handshake carries `User-Agent: hexo-bridge/<version>`.
+
 ## Development
 
 ```sh

@@ -2,7 +2,7 @@
 
 from hexo_bridge.answers import Evaluation, Line, Resign
 from hexo_bridge.bot import Bot, run
-from hexo_bridge.client import ApiError, Client
+from hexo_bridge.client import VERSION, ApiError, Client
 from hexo_bridge.engine import AnalysisRequest, Engine, Game, Level, MoveRequest, StdioEngine
 from hexo_bridge.position import Cell, Position, Side, Turn
 
@@ -26,4 +26,4 @@ __all__ = [
     "run",
 ]
 
-__version__ = "0.2.0"
+__version__ = VERSION

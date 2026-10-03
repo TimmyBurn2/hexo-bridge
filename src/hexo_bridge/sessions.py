@@ -15,7 +15,7 @@ from websockets.exceptions import InvalidStatus, WebSocketException
 from websockets.sync.client import ClientConnection, connect
 
 from hexo_bridge.answers import Evaluation, Line, Resign, as_lines, settle
-from hexo_bridge.client import ApiError, Client
+from hexo_bridge.client import USER_AGENT, ApiError, Client
 from hexo_bridge.engine import AnalysisRequest, Engine, Game, MoveRequest
 from hexo_bridge.position import Cell, Position, Side
 
@@ -141,7 +141,7 @@ class GameSession(threading.Thread):
     def _play(self) -> bool:
         """One connection; True when it should be dialed again."""
         try:
-            with connect(self.url, open_timeout=10) as socket:
+            with connect(self.url, open_timeout=10, user_agent_header=USER_AGENT) as socket:
                 self.socket = socket
                 self.wait = REDIAL_FIRST_SECONDS
                 stones: dict[Cell, Side] = {}
@@ -323,7 +323,7 @@ class AnalysisSession(threading.Thread):
     def _serve(self) -> str:
         """One connection: `served` once it opened, else `retry`, `refused`, or `gone`."""
         try:
-            with connect(self.url, open_timeout=10) as socket:
+            with connect(self.url, open_timeout=10, user_agent_header=USER_AGENT) as socket:
                 self.socket = socket
                 if self.previous is not None:
                     self.previous.close()

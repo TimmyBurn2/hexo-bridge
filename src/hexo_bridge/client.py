@@ -9,6 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterator, Mapping
+from importlib import metadata
 from typing import Any
 from urllib.parse import quote, urlencode, urljoin
 
@@ -22,6 +23,14 @@ RETRY_CAP_SECONDS = 30
 STREAM_READ_SECONDS = 30
 # Declaration keys an older server refuses, newest first: analyzer came in 0.10.0, levels in 0.9.0.
 NEWER_KEYS = ("analyzer", "levels")
+
+try:
+    VERSION = metadata.version("hexo-bridge")
+except metadata.PackageNotFoundError:
+    # A source tree put on the path by hand was never installed, so it has no metadata.
+    VERSION = "unknown"
+# Sent with every request and handshake, so a server can count the bridge versions it serves.
+USER_AGENT = f"hexo-bridge/{VERSION}"
 
 
 class ApiError(Exception):
@@ -123,6 +132,7 @@ class Client:
         )
         request.add_header("Authorization", f"Bearer {token or self.token}")
         request.add_header("Accept", "application/json")
+        request.add_header("User-Agent", USER_AGENT)
         if data is not None:
             request.add_header("Content-Type", "application/json")
         try:
