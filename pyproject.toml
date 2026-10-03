@@ -1,6 +1,6 @@
 [project]
 name = "hexo-bridge"
-version = "0.2.0"
+version = "0.3.0"
 description = "Run a HeXO bot: the Bot API's stream, games, levels, and analysis around your engine."
 readme = "README.md"
 license = "MIT"

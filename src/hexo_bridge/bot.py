@@ -24,6 +24,10 @@ HEALTHY_STREAM_SECONDS = 10
 
 LEVEL_ID = re.compile(r"^[a-z0-9-]{1,16}$")
 LEVEL_LABEL = re.compile(r"^[!-~](?:[ -~]{0,22}[!-~])?$")
+SCALE_MAX = 1_000_000
+# Cuts are drops on the scaled range, which runs from -1 to 1.
+CUT_MAX = 2
+CUTS = ("inaccuracy", "mistake", "blunder")
 
 
 def check_declaration(declaration: Mapping[str, Any]) -> None:
@@ -57,6 +61,40 @@ def check_declaration(declaration: Mapping[str, Any]) -> None:
             raise ValueError("analyzer.lines is 1, 2, or 3")
         if analyzer.get("maxSeconds", 2) not in range(1, 11):
             raise ValueError("analyzer.maxSeconds is 1 to 10")
+        if "values" in analyzer:
+            _check_values(analyzer["values"])
+
+
+def _check_values(values: Any) -> None:
+    """Refuse an analyzer's `values` the server would refuse, naming the field at fault."""
+    if not isinstance(values, Mapping):
+        raise ValueError("analyzer.values is a table of scale, meaning, and cuts")
+    unknown = sorted(set(values) - {"scale", "meaning", "cuts"})
+    if unknown:
+        raise ValueError(
+            f"analyzer.values takes scale, meaning, and cuts, not {', '.join(map(str, unknown))}"
+        )
+    if not _within(values.get("scale", 1), SCALE_MAX):
+        raise ValueError(f"analyzer.values.scale is a number above 0 and at most {SCALE_MAX}")
+    if values.get("meaning", "raw") not in ("expected", "raw"):
+        raise ValueError('analyzer.values.meaning is "expected" or "raw"')
+    if "cuts" not in values:
+        return
+    cuts = values["cuts"]
+    if not isinstance(cuts, Mapping) or set(cuts) != set(CUTS):
+        raise ValueError("analyzer.values.cuts holds inaccuracy, mistake, and blunder, and no more")
+    for name in CUTS:
+        if not _within(cuts[name], CUT_MAX):
+            raise ValueError(
+                f"analyzer.values.cuts.{name} is a number above 0 and at most {CUT_MAX}"
+            )
+    if not cuts["inaccuracy"] < cuts["mistake"] < cuts["blunder"]:
+        raise ValueError("analyzer.values.cuts rise: inaccuracy below mistake below blunder")
+
+
+def _within(value: Any, most: float) -> bool:
+    # A bool is an int to Python but not a number to JSON; NaN fails both comparisons.
+    return isinstance(value, int | float) and not isinstance(value, bool) and 0 < value <= most
 
 
 class Bot:

@@ -19,6 +19,11 @@ accepts = { turnMs = [5000, 300000], match = true, unlimited = true }
 [declaration.analyzer]
 lines = 1
 maxSeconds = 2
+# How the heuristic reads; left out, it is raw at scale 1 and no drop of value is judged.
+# [declaration.analyzer.values]
+# scale = 1
+# meaning = "expected"            # only when heuristic / scale estimates 2 P(x wins) - 1
+# cuts = { inaccuracy = 0.1, mistake = 0.2, blunder = 0.3 }
 
 # Levels a player may pick, weakest first; each request names the game's level.
 # [declaration.levels]

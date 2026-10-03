@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import threading
@@ -21,8 +22,9 @@ TRIES = 3
 RETRY_CAP_SECONDS = 30
 # The stream sends a bare newline every 10 s, so a read this long means the connection is gone.
 STREAM_READ_SECONDS = 30
-# Declaration keys an older server refuses, newest first: analyzer came in 0.10.0, levels in 0.9.0.
-NEWER_KEYS = ("analyzer", "levels")
+# Declaration keys an older server refuses, newest first, each as its path in the declaration:
+# analyzer.values came in 0.11.0, analyzer in 0.10.0, levels in 0.9.0.
+NEWER_KEYS = (("analyzer", "values"), ("analyzer",), ("levels",))
 
 try:
     VERSION = metadata.version("hexo-bridge")
@@ -74,7 +76,7 @@ class Client:
     def declare(self, declaration: Mapping[str, Any]) -> dict[str, Any]:
         """Send the bot's declaration, dropping the newest keys while a 400 says the server
         predates them."""
-        body = dict(declaration)
+        body = copy.deepcopy(dict(declaration))
         dropped: list[str] = []
         while True:
             try:
@@ -83,11 +85,15 @@ class Client:
                     log.warning("the server predates %s; declared without it", ", ".join(dropped))
                 return answer
             except ApiError as error:
-                newer = next((key for key in NEWER_KEYS if key in body), None)
+                newer = next((path for path in NEWER_KEYS if _holds(body, path)), None)
                 if error.status != 400 or newer is None:
                     raise
-                del body[newer]
-                dropped.append(newer)
+                *parents, key = newer
+                holder = body
+                for parent in parents:
+                    holder = holder[parent]
+                del holder[key]
+                dropped.append(".".join(newer))
 
     def account(self) -> dict[str, Any]:
         return self.request("GET", "/api/bot/account")
@@ -139,6 +145,14 @@ class Client:
             return urllib.request.urlopen(request, timeout=timeout)
         except urllib.error.HTTPError as error:
             raise _api_error(error) from None
+
+
+def _holds(body: Mapping[str, Any], path: tuple[str, ...]) -> bool:
+    for key in path[:-1]:
+        body = body.get(key)
+        if not isinstance(body, Mapping):
+            return False
+    return path[-1] in body
 
 
 def _api_error(error: urllib.error.HTTPError) -> ApiError:

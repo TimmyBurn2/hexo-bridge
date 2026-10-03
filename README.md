@@ -1,7 +1,7 @@
 # hexo-bridge
 
 Run a HeXO bot around your engine, on any server that speaks the
-[HeXO Bot API](https://github.com/TimmyBurn2/Hexo-Bot-Api) 0.10.0.
+[HeXO Bot API](https://github.com/TimmyBurn2/Hexo-Bot-Api) 0.11.0.
 You write the engine; the bridge holds the event stream, accepts challenges, plays each
 game on its websocket, passes the level a player picked, and reads positions as an analyzer.
 
@@ -10,10 +10,11 @@ An engine is a Python class, or a process in any language that speaks JSON lines
 ## Install
 
 ```sh
-pip install git+https://github.com/TimmyBurn2/hexo-bridge
+pip install git+https://github.com/TimmyBurn2/hexo-bridge@v0.3.0
 ```
 
 Python 3.11 or newer; the one dependency is `websockets`.
+Install by tag: each tag is a release, listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## A bot in Python
 
@@ -44,10 +45,30 @@ run(
 
 `declaration` is sent to `PATCH /api/bot/account` as written, so it takes every field the
 API defines: `accepts` (required), `about`, `version`, `repoUrl`, `levels`, and `analyzer`.
-`levels` and `analyzer` are checked against the API's bounds before anything is sent, and
-when left out they are sent as null, which clears them on the server.
-The declaration is sent again on every stream open; a server older than a key refuses it,
-and gets the declaration without it.
+`levels` and `analyzer`, its `values` included, are checked against the API's bounds before
+anything is sent, and a refusal names the field at fault; when left out they are sent as
+null, which clears them on the server.
+The declaration is sent again on every stream open.
+
+An analyzer may say how its heuristic reads with `values`:
+
+```python
+"analyzer": {
+    "lines": 1,
+    "values": {"scale": 1, "meaning": "expected", "cuts": {"inaccuracy": 0.1, "mistake": 0.2, "blunder": 0.3}},
+},
+```
+
+`scale`, above 0 and at most 1000000, 1 by default, is the heuristic the engine means as
+decided; the site divides every heuristic by it.
+`meaning` is `expected` when the heuristic, divided by `scale`, is the engine's estimate of
+x's expected result, 2 P(x wins) - 1, or `raw`, the default, when it only orders positions,
+higher being better for x.
+`cuts`, each above 0 and at most 2 and rising, are the drops of the mover's scaled value the
+site judges an inaccuracy, a mistake, and a blunder; without them no turn is judged by a drop
+of value, and forced wins are judged either way.
+Keep `raw` unless the heuristic was fitted to game results: a threat count or a search score
+orders positions without estimating anyone's chances, and `raw` says just that.
 
 The bridge makes one engine per game, as `MyEngine(game)`, and one for the analysis session,
 as `MyEngine(None)`; any callable taking that one argument works, such as a
@@ -68,9 +89,9 @@ the level the player picked, or the default's.
   A long search should check it.
 - `close()` releases what the engine holds; `kill()` stops a call that outlived its request.
 
-An evaluation is htttx's: `heuristic` is any number, read on a -1..1 scale, positive for x;
-`win_in` is the turns to a forced win, the turn of the side then to move counted first,
-positive when x wins.
+An evaluation is htttx's: `heuristic` is any number, positive for x, read on a -1..1 scale
+once divided by `values.scale`; `win_in` is the turns to a forced win, the turn of the side
+then to move counted first, positive when x wins.
 Coordinates are axial `(q, r)`: +q right, +r top-right.
 
 `Position` holds the stones in the order they were placed and the side to move, with the
@@ -146,6 +167,12 @@ a clock.
 
 ## Versions
 
+The engine contract, the `Engine` class and the JSON-lines process, is the stable surface:
+a release only adds to it, so an engine written for one release runs on every later one.
+
+This release targets Bot API 0.11.0, and an older server keeps working: it refuses a
+declaration key it predates, and the bridge declares again without it, `analyzer.values`
+first, then `analyzer`, then `levels`, logging what it left out.
 Every request and websocket handshake carries `User-Agent: hexo-bridge/<version>`.
 
 ## Development

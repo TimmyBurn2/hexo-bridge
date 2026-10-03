@@ -18,7 +18,8 @@ WIN_IN_LIMIT = 1000
 class Evaluation:
     """htttx's evaluation of the position after a line; x counts positive, o negative.
 
-    `heuristic` is any real number, read on a -1..1 scale by the website.
+    `heuristic` is any real number; the website divides it by the analyzer's declared
+    `values.scale`, 1 by default, and reads the result on a -1..1 scale.
     `win_in` is the turns to a forced win, the turn of the side then to move counted first:
     positive when x wins, negative when o does.
     """

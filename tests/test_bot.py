@@ -1,5 +1,6 @@
 import contextlib
 import json
+import re
 import threading
 import time
 import tomllib
@@ -17,6 +18,9 @@ from hexo_bridge.sessions import AnalysisSession, GameSession
 
 ACCEPTS = {"turnMs": [5000, 300000], "match": True, "unlimited": True}
 DECLARATION = {"accepts": ACCEPTS, "analyzer": {"lines": 1, "maxSeconds": 2}}
+CUTS = {"inaccuracy": 0.1, "mistake": 0.2, "blunder": 0.3}
+VALUES = {"scale": 1, "meaning": "expected", "cuts": CUTS}
+# Hexo-Bot-Api's examples/stream.ndjson at tag v0.11.0, verbatim.
 FIXTURE = Path(__file__).parent / "fixtures" / "stream.ndjson"
 PYPROJECT = Path(__file__).parent.parent / "pyproject.toml"
 GAME = Game("g_1", "o", "rival", False, Level(None), {"mode": "turn", "turnTimeMs": 5000}, 1)
@@ -42,6 +46,8 @@ class FakeServer:
 
     def __init__(self):
         self.declarations = []
+        # A server older than a declaration key refuses a body that holds it.
+        self.refuses = lambda body: False
         self.agents = []
         self.accepted = []
         self.game_answers = []
@@ -98,6 +104,9 @@ class FakeServer:
             def do_PATCH(self):
                 server.agents.append(("PATCH", self.headers["User-Agent"]))
                 body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                if server.refuses(body):
+                    self.reply({"error": "the declaration fails validation"}, 400)
+                    return
                 server.declarations.append((self.headers["Authorization"], body))
                 self.reply(body)
 
@@ -119,9 +128,9 @@ class FakeServer:
                     self.wfile.write(b"\n")
                     self.wfile.flush()
 
-            def reply(self, body):
+            def reply(self, body, status=200):
                 data = json.dumps(body).encode()
-                self.send_response(200)
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
                 self.end_headers()
@@ -201,6 +210,13 @@ class FakeServer:
         with contextlib.suppress(TimeoutError):
             self.readings.append(json.loads(ws.recv(timeout=1)))
         self.analysis_done.set()
+
+
+@pytest.fixture
+def server():
+    server = FakeServer()
+    yield server
+    server.close()
 
 
 @pytest.fixture(scope="module")
@@ -342,3 +358,61 @@ def test_every_request_and_handshake_names_the_bridge_and_its_version(played):
     version = tomllib.loads(PYPROJECT.read_text())["project"]["version"]
     assert {kind for kind, _ in played.agents} == {"PATCH", "GET", "POST", "game", "analysis"}
     assert {agent for _, agent in played.agents} == {f"hexo-bridge/{version}"}
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        VALUES,
+        {},
+        {"meaning": "raw"},
+        {"scale": 1_000_000, "cuts": {"inaccuracy": 0.5, "mistake": 1, "blunder": 2}},
+    ],
+)
+def test_values_within_the_apis_bounds_pass_the_check_before_sending(values):
+    bot.check_declaration({"accepts": ACCEPTS, "analyzer": {"lines": 1, "values": values}})
+
+
+@pytest.mark.parametrize(
+    ("values", "field"),
+    [
+        ("expected", "analyzer.values"),
+        ({"scales": 1}, "analyzer.values"),
+        ({"scale": 0}, "analyzer.values.scale"),
+        ({"scale": 1_000_001}, "analyzer.values.scale"),
+        ({"scale": True}, "analyzer.values.scale"),
+        ({"scale": None}, "analyzer.values.scale"),
+        ({"meaning": "calibrated"}, "analyzer.values.meaning"),
+        ({"cuts": None}, "analyzer.values.cuts"),
+        ({"cuts": {"inaccuracy": 0.1, "mistake": 0.2}}, "analyzer.values.cuts"),
+        ({"cuts": {**CUTS, "swindle": 0.4}}, "analyzer.values.cuts"),
+        ({"cuts": {**CUTS, "inaccuracy": 0}}, "analyzer.values.cuts.inaccuracy"),
+        ({"cuts": {**CUTS, "mistake": float("nan")}}, "analyzer.values.cuts.mistake"),
+        ({"cuts": {**CUTS, "blunder": 2.5}}, "analyzer.values.cuts.blunder"),
+        ({"cuts": {"inaccuracy": 0.3, "mistake": 0.2, "blunder": 0.1}}, "analyzer.values.cuts"),
+        ({"cuts": {"inaccuracy": 0.2, "mistake": 0.2, "blunder": 0.3}}, "analyzer.values.cuts"),
+    ],
+)
+def test_values_out_of_the_apis_bounds_are_refused_naming_the_field(values, field):
+    declaration = {"accepts": ACCEPTS, "analyzer": {"lines": 1, "values": values}}
+    with pytest.raises(ValueError, match=f"^{re.escape(field)} "):
+        bot.check_declaration(declaration)
+
+
+def test_an_older_server_gets_the_declaration_without_the_keys_it_predates_newest_first(server):
+    analyzer = {**DECLARATION["analyzer"], "values": VALUES}
+    declaration = {"accepts": ACCEPTS, "levels": None, "analyzer": analyzer}
+    client = Client(server.url, "hxo_test")
+
+    # Bot API 0.10.0 takes an analyzer, but not its values.
+    server.refuses = lambda body: "values" in (body.get("analyzer") or {})
+    client.declare(declaration)
+    assert server.declarations[-1][1] == {**declaration, "analyzer": DECLARATION["analyzer"]}
+
+    # Bot API 0.9.0 takes no analyzer at all.
+    server.refuses = lambda body: "analyzer" in body
+    client.declare(declaration)
+    assert server.declarations[-1][1] == {"accepts": ACCEPTS, "levels": None}
+
+    # The caller's declaration is left whole, so the next stream open sends it all again.
+    assert analyzer["values"] == VALUES
