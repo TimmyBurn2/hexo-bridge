@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.4.1
+
+- Works with websockets 17; the lock moves to websockets 17.2.
+- The package names its author and links the repository, this changelog, and the Bot API.
+- Every push and pull request runs the tests and the linter; dependency updates arrive monthly as one bundle.
+
 ## v0.4.0
 
 - Targets Bot API 0.12.0; older servers keep working.

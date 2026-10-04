@@ -1,11 +1,11 @@
-# Minor and patch updates arrive grouped once a week; a major version comes
+# Minor and patch updates arrive grouped once a month; a major version comes
 # alone, so a breaking upgrade is never hidden in a bundle.
 version: 2
 updates:
     - package-ecosystem: uv
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       commit-message:
           prefix: build(deps)
       groups:
@@ -14,7 +14,7 @@ updates:
     - package-ecosystem: github-actions
       directory: /
       schedule:
-          interval: weekly
+          interval: monthly
       commit-message:
           prefix: ci(deps)
       groups:
