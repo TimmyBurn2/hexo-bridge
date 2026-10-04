@@ -4,8 +4,14 @@ version = "0.4.0"
 description = "Run a HeXO bot: the Bot API's stream, games, levels, and analysis around your engine."
 readme = "README.md"
 license = "MIT"
+authors = [{ name = "TimmyBurn" }]
 requires-python = ">=3.11"
 dependencies = ["websockets>=13"]
+
+[project.urls]
+Homepage = "https://github.com/TimmyBurn2/hexo-bridge"
+Changelog = "https://github.com/TimmyBurn2/hexo-bridge/blob/main/CHANGELOG.md"
+"Bot API" = "https://github.com/TimmyBurn2/Hexo-Bot-Api"
 
 [project.scripts]
 hexo-bridge = "hexo_bridge.cli:main"
